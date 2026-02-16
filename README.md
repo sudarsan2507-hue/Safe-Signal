@@ -154,6 +154,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ for hackathon excellence**
+**Built with for hackathon excellence**
 
 *SafeSignal - Because every second counts in an emergency*
