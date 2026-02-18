@@ -1,0 +1,207 @@
+.audio-visualizer {
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.visualizer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.visualizer-header h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0;
+}
+
+.risk-weight {
+    font-size: 0.875rem;
+    color: var(--color-accent);
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+}
+
+/* Visualization Grid */
+.viz-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-md);
+}
+
+.viz-panel {
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.viz-panel-wide {
+    grid-column: 1 / -1;
+}
+
+.viz-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.viz-canvas {
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+    background: rgba(15, 23, 42, 1);
+}
+
+/* Stress Meter */
+.stress-meter {
+    position: relative;
+    width: 100%;
+    height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.meter-svg {
+    width: 100%;
+    max-width: 200px;
+    height: auto;
+}
+
+.meter-value {
+    position: absolute;
+    bottom: 20px;
+    text-align: center;
+}
+
+.stress-percentage {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-text-primary);
+    line-height: 1;
+}
+
+.stress-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    margin-top: 0.25rem;
+    letter-spacing: 1px;
+}
+
+/* ── Calibrating Overlay ─────────────────────────────────────────────────── */
+.stress-meter.calibrating {
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px dashed rgba(59, 130, 246, 0.4);
+    border-radius: var(--radius-md);
+}
+
+.calibrating-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    animation: calibratePulse 1.5s ease-in-out infinite;
+}
+
+.calibrating-spinner {
+    font-size: 1.75rem;
+}
+
+.calibrating-text {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #60a5fa;
+    letter-spacing: 0.5px;
+}
+
+.calibrating-sub {
+    font-size: 0.75rem;
+    color: var(--color-text-secondary);
+    margin: 0;
+}
+
+@keyframes calibratePulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* ── Baseline Debug Panel ────────────────────────────────────────────────── */
+.baseline-debug {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding: 0.375rem 0.5rem;
+    background: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    font-family: 'Courier New', monospace;
+    color: #6ee7b7;
+}
+
+.baseline-title {
+    font-weight: 700;
+    color: #10b981;
+    width: 100%;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    .viz-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .viz-panel-wide {
+        grid-column: 1;
+    }
+
+    .audio-visualizer {
+        padding: var(--spacing-sm);
+    }
+
+    .visualizer-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--spacing-xs);
+    }
+
+    .risk-weight {
+        font-size: 0.75rem;
+    }
+}
+
+/* Animation for smooth updates */
+.viz-canvas {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}

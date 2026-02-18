@@ -34,11 +34,14 @@ export const detectGesture = () => {
 
 /**
  * Simulate stress detection from audio (mock for demo)
- * In production, this would analyze pitch, tone, volume changes
+ * NOTE: Real audio stress detection is now in src/utils/audio/audioPipeline.js
+ * This function is kept for backward compatibility but will be replaced by real detection
  * @returns {number} - 0-1
  */
 export const detectStress = () => {
-    // For demo: random stress level
+    // This is now handled by the audio pipeline
+    // See: audioPipeline.js, stressInference.js
+    // For backward compatibility, return low baseline
     return Math.random() * 0.3; // Low baseline stress
 };
 

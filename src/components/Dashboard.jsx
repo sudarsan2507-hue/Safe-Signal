@@ -11,6 +11,9 @@ import {
     triggerEmergency,
 } from '../utils/riskEngine';
 import { getCurrentLocation, getMockLocation } from '../utils/geo';
+import { getAudioPipeline } from '../utils/audio/audioPipeline';
+import AudioVisualizer from './AudioVisualizer';
+import GestureDetector from './GestureDetector';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -21,22 +24,86 @@ const Dashboard = () => {
     const [showPreAlert, setShowPreAlert] = useState(false);
     const [countdown, setCountdown] = useState(5);
 
+    // Audio stress detection state
+    const [audioStressScore, setAudioStressScore] = useState(0);
+    const [audioRiskWeight, setAudioRiskWeight] = useState(0);
+    const [mfccData, setMFCCData] = useState([]);
+    const [analyser, setAnalyser] = useState(null);
+    const [audioEnabled, setAudioEnabled] = useState(false);
+    const [isCalibrating, setIsCalibrating] = useState(false);
+    const [audioBaseline, setAudioBaseline] = useState(null);
+
+    // Gesture detection state
+    const [gestureEnabled, setGestureEnabled] = useState(false);
+    const [gestureScore, setGestureScore] = useState(0);
+    const [gestureConfidence, setGestureConfidence] = useState(0);
+    const [gestureIsFist, setGestureIsFist] = useState(false);
+    const gestureScoreRef = useRef(0); // Ref for use inside setInterval
+
+    // Motion state (for debug panel)
+    const [lastMotionScore, setLastMotionScore] = useState(0);
+    const [lastGestureInRisk, setLastGestureInRisk] = useState(0);
+
     const detectionIntervalRef = useRef(null);
     const highRiskTimerRef = useRef(null);
     const countdownIntervalRef = useRef(null);
+    const audioPipelineRef = useRef(null);
 
-    // Start/Stop Protection
+    // Start/Stop Audio Pipeline
+    useEffect(() => {
+        if (isProtectionOn && audioEnabled) {
+            // Start audio pipeline
+            const pipeline = getAudioPipeline();
+            audioPipelineRef.current = pipeline;
+
+            pipeline.start((audioData) => {
+                setAudioStressScore(audioData.stressScore);
+                setAudioRiskWeight(audioData.audioRiskWeight);
+                setMFCCData(audioData.mfccData);
+                setAnalyser(audioData.analyser);
+                setIsCalibrating(audioData.isCalibrating);
+                setAudioBaseline(audioData.baseline);
+            }).catch((error) => {
+                console.error('Audio pipeline failed:', error);
+                setAudioEnabled(false);
+            });
+        } else {
+            // Stop audio pipeline
+            if (audioPipelineRef.current) {
+                audioPipelineRef.current.stop();
+                audioPipelineRef.current = null;
+            }
+            setAudioStressScore(0);
+            setAudioRiskWeight(0);
+            setIsCalibrating(false);
+            setAudioBaseline(null);
+        }
+
+        return () => {
+            if (audioPipelineRef.current) {
+                audioPipelineRef.current.stop();
+            }
+        };
+    }, [isProtectionOn, audioEnabled]);
+
+    // Start/Stop Protection Detection Loop
     useEffect(() => {
         if (isProtectionOn) {
             // Start detection loop
             detectionIntervalRef.current = setInterval(() => {
-                const gesture = detectGesture();
-                const stress = detectStress();
+                const gesture = gestureScoreRef.current; // Real gesture score
                 const motion = detectMotion();
+
+                // Use real audio stress if available, otherwise mock
+                const stress = audioEnabled ? audioStressScore : detectStress();
 
                 const risk = calculateRisk(gesture, stress, motion);
                 setRiskScore(risk);
                 setRiskLevel(getRiskLevel(risk));
+
+                // Track components for debug panel
+                setLastMotionScore(motion);
+                setLastGestureInRisk(gesture);
 
                 // Check threshold
                 if (risk > 0.75) {
@@ -76,7 +143,7 @@ const Dashboard = () => {
                 clearTimeout(highRiskTimerRef.current);
             }
         };
-    }, [isProtectionOn]);
+    }, [isProtectionOn, audioStressScore, audioEnabled]);
 
     // Countdown for pre-alert
     const startCountdown = () => {
@@ -142,10 +209,50 @@ const Dashboard = () => {
                 {/* Header */}
                 <div className="dashboard-header">
                     <h2>SafeSignal</h2>
-                    <button className="settings-btn" onClick={() => alert('Settings coming soon!')}>
-                        ⚙️
-                    </button>
+                    <div className="header-controls">
+                        <button
+                            className={`audio-toggle-btn ${audioEnabled ? 'active' : ''}`}
+                            onClick={() => setAudioEnabled(!audioEnabled)}
+                            title="Toggle Audio Detection"
+                        >
+                            {audioEnabled ? '🎤' : '🔇'}
+                        </button>
+                        <button
+                            className={`audio-toggle-btn ${gestureEnabled ? 'active gesture-active' : ''}`}
+                            onClick={() => setGestureEnabled(!gestureEnabled)}
+                            title="Toggle Gesture Detection"
+                        >
+                            {gestureEnabled ? '📷' : '🚫'}
+                        </button>
+                        <button className="settings-btn" onClick={() => alert('Settings coming soon!')}>
+                            ⚙️
+                        </button>
+                    </div>
                 </div>
+
+                {/* Audio Visualizer */}
+                {audioEnabled && isProtectionOn && analyser && (
+                    <AudioVisualizer
+                        analyser={analyser}
+                        stressScore={audioStressScore}
+                        mfccData={mfccData}
+                        audioRiskWeight={audioRiskWeight}
+                        isCalibrating={isCalibrating}
+                        baseline={audioBaseline}
+                    />
+                )}
+
+                {/* Gesture Detector */}
+                {gestureEnabled && isProtectionOn && (
+                    <GestureDetector
+                        onGestureUpdate={(data) => {
+                            setGestureScore(data.gestureScore);
+                            setGestureConfidence(data.confidence);
+                            setGestureIsFist(data.isFist);
+                            gestureScoreRef.current = data.gestureScore;
+                        }}
+                    />
+                )}
 
                 {/* Status Circle */}
                 <motion.div
@@ -182,6 +289,31 @@ const Dashboard = () => {
                             />
                         </div>
                         <p className="risk-value">{Math.round(riskScore * 100)}%</p>
+
+                        {/* Debug Risk Panel */}
+                        <div className="risk-debug-panel">
+                            <div className="risk-debug-title">📊 Risk Components</div>
+                            <div className="risk-debug-row">
+                                <span>🤚 Gesture</span>
+                                <span>{lastGestureInRisk} × 0.5</span>
+                                <span className="risk-debug-contrib">{(lastGestureInRisk * 0.5).toFixed(2)}</span>
+                            </div>
+                            <div className="risk-debug-row">
+                                <span>🎤 Stress</span>
+                                <span>{audioEnabled ? audioStressScore.toFixed(2) : 'mock'} × 0.3</span>
+                                <span className="risk-debug-contrib">{(audioEnabled ? audioStressScore * 0.3 : 0.05).toFixed(2)}</span>
+                            </div>
+                            <div className="risk-debug-row">
+                                <span>📱 Motion</span>
+                                <span>{lastMotionScore.toFixed(2)} × 0.2</span>
+                                <span className="risk-debug-contrib">{(lastMotionScore * 0.2).toFixed(2)}</span>
+                            </div>
+                            <div className="risk-debug-row risk-debug-total">
+                                <span>⚡ Total</span>
+                                <span></span>
+                                <span className="risk-debug-contrib">{riskScore.toFixed(2)}</span>
+                            </div>
+                        </div>
                     </motion.div>
                 )}
 

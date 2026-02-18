@@ -1,3 +1,6 @@
+/* Google Fonts - Inter */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 /* SafeSignal - Global Styles */
 
 :root {
@@ -10,26 +13,26 @@
   --color-text-primary: #f1f5f9;
   --color-text-secondary: #94a3b8;
   --color-accent: #3b82f6;
-  
+
   /* Spacing */
   --spacing-xs: 0.5rem;
   --spacing-sm: 1rem;
   --spacing-md: 1.5rem;
   --spacing-lg: 2rem;
   --spacing-xl: 3rem;
-  
+
   /* Border Radius */
   --radius-sm: 0.5rem;
   --radius-md: 1rem;
   --radius-lg: 1.5rem;
   --radius-full: 9999px;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1);
-  
+
   /* Typography */
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-synthesis: none;
@@ -38,16 +41,14 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Google Fonts - Inter */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   width: 100%;
   height: 100%;
   overflow-x: hidden;
@@ -151,7 +152,12 @@ button {
 }
 
 /* Text Styles */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 700;
   line-height: 1.2;
   margin-bottom: var(--spacing-sm);
@@ -180,7 +186,8 @@ p {
 }
 
 /* Input Styles */
-input, textarea {
+input,
+textarea {
   width: 100%;
   padding: var(--spacing-sm);
   background: rgba(255, 255, 255, 0.05);
@@ -192,13 +199,15 @@ input, textarea {
   transition: all 0.3s ease;
 }
 
-input:focus, textarea:focus {
+input:focus,
+textarea:focus {
   outline: none;
   border-color: var(--color-accent);
   background: rgba(255, 255, 255, 0.08);
 }
 
-input::placeholder, textarea::placeholder {
+input::placeholder,
+textarea::placeholder {
   color: var(--color-text-secondary);
   opacity: 0.6;
 }
@@ -209,6 +218,7 @@ input::placeholder, textarea::placeholder {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -216,9 +226,12 @@ input::placeholder, textarea::placeholder {
 }
 
 @keyframes pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     opacity: 1;
   }
+
   50% {
     opacity: 0.5;
   }
@@ -233,7 +246,7 @@ input::placeholder, textarea::placeholder {
   h1 {
     font-size: 2rem;
   }
-  
+
   .page {
     padding: var(--spacing-md);
   }
