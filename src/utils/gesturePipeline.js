@@ -1,159 +1,188 @@
 /**
- * Gesture Pipeline — MediaPipe Hands (Closed Fist Detection)
- * Runs fully client-side using @mediapipe/tasks-vision WASM.
- * Detects a closed fist held for 2 consecutive seconds → gestureScore = 1.
+ * Gesture Pipeline — MediaPipe Hands, closed-fist distress signal.
+ * Runs entirely on-device; no frame ever leaves the browser.
+ *
+ * The hold timer tolerates brief tracking dropouts. Hand tracking flickers
+ * constantly in poor light, and a timer that resets on every lost frame can
+ * never complete a two-second hold in the conditions this app is built for.
  */
 
 import { HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
-// ─── Constants ─────────────────────────────────────────────────────────────
-
-/** Normalized distance threshold below which a fingertip is "curled in" */
+/** Normalized distance below which a fingertip counts as curled toward the palm. */
 const FIST_THRESHOLD = 0.12;
 
-/** Duration (ms) the fist must be held before gestureScore flips to 1 */
-const FIST_HOLD_DURATION_MS = 2000;
+/** How long the fist must be held before it counts as a deliberate signal. */
+export const FIST_HOLD_DURATION_MS = 2000;
+
+/** Tracking may drop out for this long without resetting the hold. */
+const TRACKING_GRACE_MS = 400;
+
+/** Fraction of fingers that must be curled for the frame to read as a fist. */
+const FIST_CONFIDENCE_THRESHOLD = 0.6;
 
 /**
- * MediaPipe landmark indices for fingertips and palm reference points.
- * See: https://developers.google.com/mediapipe/solutions/vision/hand_landmarker
- *
- * Wrist = 0, Palm center approximated from landmarks 0, 5, 9, 13, 17
- * Fingertips: Index=8, Middle=12, Ring=16, Pinky=20
- * Thumb tip = 4 (excluded — thumb curl geometry differs)
+ * MediaPipe hand landmark indices.
+ * Wrist = 0. Fingertips: index 8, middle 12, ring 16, pinky 20.
+ * The thumb is excluded — its curl geometry differs from the fingers.
  */
 const FINGERTIP_INDICES = [8, 12, 16, 20];
 const PALM_INDICES = [0, 5, 9, 13, 17];
 
-// ─── Controller ────────────────────────────────────────────────────────────
+const WASM_PATH = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm';
+const MODEL_PATH =
+    'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
 class GesturePipelineController {
     constructor() {
         this.handLandmarker = null;
         this.isInitialized = false;
-        this.isInitializing = false;
+        this.initPromise = null;
 
-        // Fist hold tracking
         this.fistStartTime = null;
+        this.lastFistSeenTime = null;
         this.gestureScore = 0;
         this.isFist = false;
         this.confidence = 0;
-        this.lastLandmarks = null;
-
-        // Performance: track last detection time
-        this.lastDetectionTime = 0;
+        this.lastVideoTime = -1;
+        this.lastResult = null;
     }
 
     /**
-     * Initialize MediaPipe HandLandmarker.
-     * Loads WASM from the installed package's bundled assets.
+     * Load the MediaPipe model. Concurrent calls share one initialisation.
+     * @returns {Promise<void>}
      */
     async init() {
-        if (this.isInitialized || this.isInitializing) return;
-        this.isInitializing = true;
+        if (this.isInitialized) return;
+        if (this.initPromise) return this.initPromise;
 
-        try {
-            const vision = await FilesetResolver.forVisionTasks(
-                'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-            );
-
+        this.initPromise = (async () => {
+            const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
             this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-                baseOptions: {
-                    modelAssetPath:
-                        'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-                    delegate: 'GPU',
-                },
+                baseOptions: { modelAssetPath: MODEL_PATH, delegate: 'GPU' },
                 runningMode: 'VIDEO',
                 numHands: 1,
                 minHandDetectionConfidence: 0.5,
                 minHandPresenceConfidence: 0.5,
                 minTrackingConfidence: 0.5,
             });
-
             this.isInitialized = true;
-            this.isInitializing = false;
-            console.log('✅ MediaPipe HandLandmarker initialized');
-        } catch (error) {
-            this.isInitializing = false;
-            console.error('Failed to initialize HandLandmarker:', error);
-            throw error;
+        })();
+
+        try {
+            await this.initPromise;
+        } finally {
+            this.initPromise = null;
         }
     }
 
     /**
-     * Detect hand landmarks in a video frame.
-     * Must be called inside a requestAnimationFrame loop.
+     * Analyse one video frame. Call from a requestAnimationFrame loop.
      *
      * @param {HTMLVideoElement} videoEl
-     * @returns {{ landmarks: Array|null, isFist: boolean, gestureScore: number, confidence: number }}
+     * @returns {{landmarks: Array|null, isFist: boolean, gestureScore: number, confidence: number, holdProgress: number, tracking: boolean}}
      */
     detectFrame(videoEl) {
-        if (!this.isInitialized || !this.handLandmarker) {
-            return { landmarks: null, isFist: false, gestureScore: 0, confidence: 0 };
-        }
+        const idle = {
+            landmarks: null,
+            isFist: this.isFist,
+            gestureScore: this.gestureScore,
+            confidence: 0,
+            holdProgress: this.getHoldProgress(),
+            tracking: false,
+        };
 
-        if (videoEl.readyState < 2) {
-            return { landmarks: null, isFist: false, gestureScore: 0, confidence: 0 };
-        }
+        if (!this.isInitialized || !this.handLandmarker) return idle;
+        if (!videoEl || videoEl.readyState < 2) return idle;
 
         const now = performance.now();
 
-        // Run detection
-        const result = this.handLandmarker.detectForVideo(videoEl, now);
+        // MediaPipe rejects repeated timestamps; skip frames the video has not
+        // actually advanced past.
+        if (videoEl.currentTime === this.lastVideoTime) {
+            return { ...idle, ...(this.lastResult ?? {}), holdProgress: this.getHoldProgress() };
+        }
+        this.lastVideoTime = videoEl.currentTime;
 
-        if (!result.landmarks || result.landmarks.length === 0) {
-            // No hand detected — reset fist timer
-            this._resetFist();
+        let result;
+        try {
+            result = this.handLandmarker.detectForVideo(videoEl, now);
+        } catch {
+            return idle;
+        }
+
+        const landmarks = result?.landmarks?.[0] ?? null;
+
+        if (!landmarks) {
+            this.applyTrackingGap(now);
+            this.lastResult = { landmarks: null, confidence: 0, tracking: false };
             return {
                 landmarks: null,
-                isFist: false,
+                isFist: this.isFist,
                 gestureScore: this.gestureScore,
                 confidence: 0,
+                holdProgress: this.getHoldProgress(),
+                tracking: false,
             };
         }
 
-        const landmarks = result.landmarks[0]; // First hand only
-        this.lastLandmarks = landmarks;
+        const fistConfidence = this.computeFistConfidence(landmarks);
+        this.confidence = fistConfidence;
 
-        // Compute fist confidence
-        const fistConf = this._computeFistConfidence(landmarks);
-        this.confidence = fistConf;
-        const currentlyFist = fistConf > 0.6;
-
-        // 2-second hold logic
-        if (currentlyFist) {
-            if (this.fistStartTime === null) {
-                this.fistStartTime = now;
-            }
-            const held = now - this.fistStartTime;
-            if (held >= FIST_HOLD_DURATION_MS) {
+        if (fistConfidence >= FIST_CONFIDENCE_THRESHOLD) {
+            if (this.fistStartTime === null) this.fistStartTime = now;
+            this.lastFistSeenTime = now;
+            if (now - this.fistStartTime >= FIST_HOLD_DURATION_MS) {
                 this.gestureScore = 1;
                 this.isFist = true;
             }
         } else {
-            this._resetFist();
+            this.applyTrackingGap(now);
         }
+
+        this.lastResult = { landmarks, confidence: fistConfidence, tracking: true };
 
         return {
             landmarks,
             isFist: this.isFist,
             gestureScore: this.gestureScore,
-            confidence: fistConf,
-            holdProgress: this.fistStartTime
-                ? Math.min((now - this.fistStartTime) / FIST_HOLD_DURATION_MS, 1)
-                : 0,
+            confidence: fistConfidence,
+            holdProgress: this.getHoldProgress(),
+            tracking: true,
         };
     }
 
     /**
-     * Compute a 0–1 fist confidence score.
-     * Measures how many fingertips are within FIST_THRESHOLD of the palm center.
-     * @param {Array} landmarks - 21 normalized {x,y,z} landmarks
-     * @returns {number} 0–1 confidence
+     * Handle a frame where the fist was not seen. The hold survives short
+     * dropouts and only resets once the grace period lapses.
+     * @param {number} now
      */
-    _computeFistConfidence(landmarks) {
-        // Compute palm center as mean of PALM_INDICES
-        let px = 0, py = 0;
+    applyTrackingGap(now) {
+        if (this.fistStartTime === null) return;
+        if (this.lastFistSeenTime !== null && now - this.lastFistSeenTime <= TRACKING_GRACE_MS) {
+            return;
+        }
+        this.resetFist();
+    }
+
+    /**
+     * Fraction of the required hold completed so far.
+     * @returns {number} 0–1
+     */
+    getHoldProgress() {
+        if (this.gestureScore === 1) return 1;
+        if (this.fistStartTime === null) return 0;
+        return Math.min((performance.now() - this.fistStartTime) / FIST_HOLD_DURATION_MS, 1);
+    }
+
+    /**
+     * Fraction of tracked fingertips curled toward the palm centre.
+     * @param {Array<{x: number, y: number}>} landmarks
+     * @returns {number} 0–1
+     */
+    computeFistConfidence(landmarks) {
+        let px = 0;
+        let py = 0;
         for (const idx of PALM_INDICES) {
             px += landmarks[idx].x;
             py += landmarks[idx].y;
@@ -161,57 +190,56 @@ class GesturePipelineController {
         px /= PALM_INDICES.length;
         py /= PALM_INDICES.length;
 
-        // Count fingertips within threshold
-        let curledCount = 0;
+        let curled = 0;
         for (const tipIdx of FINGERTIP_INDICES) {
             const tip = landmarks[tipIdx];
-            const dist = Math.sqrt((tip.x - px) ** 2 + (tip.y - py) ** 2);
-            if (dist < FIST_THRESHOLD) curledCount++;
+            const dist = Math.hypot(tip.x - px, tip.y - py);
+            if (dist < FIST_THRESHOLD) curled++;
         }
 
-        return curledCount / FINGERTIP_INDICES.length; // 0, 0.25, 0.5, 0.75, or 1.0
+        return curled / FINGERTIP_INDICES.length;
     }
 
-    /** Reset fist hold state */
-    _resetFist() {
+    /** Clear hold state without unloading the model. */
+    resetFist() {
         this.fistStartTime = null;
+        this.lastFistSeenTime = null;
         this.isFist = false;
         this.gestureScore = 0;
     }
 
-    /** Get current gesture score (0 or 1) */
+    /** @returns {number} 0 or 1 */
     getGestureScore() {
         return this.gestureScore;
     }
 
-    /** Release resources */
+    /** Release the model and all tracking state. */
     stop() {
-        if (this.handLandmarker) {
-            this.handLandmarker.close();
-            this.handLandmarker = null;
+        try {
+            this.handLandmarker?.close();
+        } catch {
+            // Closing an already-torn-down landmarker is not actionable.
         }
+        this.handLandmarker = null;
         this.isInitialized = false;
-        this.isInitializing = false;
-        this._resetFist();
-        this.lastLandmarks = null;
-        console.log('🛑 Gesture pipeline stopped');
+        this.initPromise = null;
+        this.lastVideoTime = -1;
+        this.lastResult = null;
+        this.resetFist();
     }
 }
 
-// ─── Singleton ─────────────────────────────────────────────────────────────
-
 let pipelineInstance = null;
 
+/** @returns {GesturePipelineController} */
 export const getGesturePipeline = () => {
-    if (!pipelineInstance) {
-        pipelineInstance = new GesturePipelineController();
-    }
+    if (!pipelineInstance) pipelineInstance = new GesturePipelineController();
     return pipelineInstance;
 };
 
 export const resetGesturePipeline = () => {
-    if (pipelineInstance) {
-        pipelineInstance.stop();
-    }
+    pipelineInstance?.stop();
     pipelineInstance = null;
 };
+
+export { GesturePipelineController };
