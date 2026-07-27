@@ -1,95 +1,165 @@
 /**
  * Feature Extraction Module
- * Extracts MFCC, pitch, RMS, ZCR, spectral centroid using Meyda.js
+ * MFCC, pitch (F0), RMS, ZCR and spectral centroid for short-time frames.
+ *
+ * Frames arriving here must be FRAME_SIZE (a power of two) — see audioProcessor.
+ * Extraction failures are surfaced through `lastExtractionError` rather than
+ * being silently swallowed, because a systematic failure (wrong frame size,
+ * bad option) otherwise looks identical to "the room is quiet".
  */
 
 import Meyda from 'meyda';
 
+/** Standard MFCC count for speech. Must not exceed MEL_BANDS. */
+export const NUM_MFCC = 13;
+
+/** Mel filterbank size backing the MFCC computation. */
+export const MEL_BANDS = 26;
+
+/** Autocorrelation peak below which a frame is treated as unvoiced. */
+const VOICING_THRESHOLD = 0.45;
+
+const MIN_PITCH_HZ = 80;
+const MAX_PITCH_HZ = 400;
+
+let lastExtractionError = null;
+
+/** @returns {string|null} Most recent extraction failure, if any */
+export const getLastExtractionError = () => lastExtractionError;
+
+export const clearExtractionError = () => {
+    lastExtractionError = null;
+};
+
 /**
- * Extract MFCC coefficients from audio frame
- * @param {Float32Array} frame - Audio frame (typically 25ms)
+ * Extract MFCC coefficients.
+ * @param {Float32Array} frame - power-of-two length
  * @param {number} sampleRate
- * @param {number} numCoefficients - Number of MFCCs (30-40)
- * @returns {Float32Array} MFCC coefficients
+ * @param {number} numCoefficients
+ * @returns {Float32Array}
  */
-export const extractMFCC = (frame, sampleRate, numCoefficients = 40) => {
+export const extractMFCC = (frame, sampleRate, numCoefficients = NUM_MFCC) => {
     try {
         const features = Meyda.extract(['mfcc'], frame, sampleRate, {
             numberOfMFCCCoefficients: numCoefficients,
+            melBands: MEL_BANDS,
         });
-
-        return features.mfcc ? new Float32Array(features.mfcc) : new Float32Array(numCoefficients);
+        if (!features?.mfcc) {
+            lastExtractionError = 'Meyda returned no MFCC data';
+            return new Float32Array(numCoefficients);
+        }
+        return new Float32Array(features.mfcc);
     } catch (error) {
-        console.error('MFCC extraction failed:', error);
+        lastExtractionError = `MFCC extraction failed: ${error.message}`;
         return new Float32Array(numCoefficients);
     }
 };
 
 /**
- * Extract pitch (F0) using autocorrelation
+ * Estimate fundamental frequency using normalized autocorrelation.
+ *
+ * Raw (unnormalized) autocorrelation is biased toward short lags simply
+ * because more terms contribute to the sum, which pushes every estimate
+ * toward the top of the search range. Normalizing by the energy of both
+ * overlapping segments removes that bias and yields a 0–1 peak value we can
+ * threshold for voicing.
+ *
  * @param {Float32Array} frame
  * @param {number} sampleRate
- * @returns {number} Pitch in Hz (0 if unvoiced)
+ * @returns {{ hz: number, confidence: number }} hz is 0 when unvoiced
  */
-export const extractPitch = (frame, sampleRate) => {
-    const minPitch = 80; // Hz (typical for human voice)
-    const maxPitch = 400; // Hz
-    const minLag = Math.floor(sampleRate / maxPitch);
-    const maxLag = Math.floor(sampleRate / minPitch);
+export const extractPitchDetailed = (frame, sampleRate) => {
+    const minLag = Math.floor(sampleRate / MAX_PITCH_HZ);
+    const maxLag = Math.min(Math.floor(sampleRate / MIN_PITCH_HZ), Math.floor(frame.length / 2));
 
-    // Autocorrelation
-    let maxCorrelation = 0;
+    if (maxLag <= minLag) return { hz: 0, confidence: 0 };
+
     let bestLag = 0;
+    let bestScore = 0;
+    const scores = new Float64Array(maxLag + 1);
 
-    for (let lag = minLag; lag <= maxLag && lag < frame.length / 2; lag++) {
-        let correlation = 0;
-        for (let i = 0; i < frame.length - lag; i++) {
-            correlation += frame[i] * frame[i + lag];
+    for (let lag = minLag; lag <= maxLag; lag++) {
+        let dot = 0;
+        let energyA = 0;
+        let energyB = 0;
+        const n = frame.length - lag;
+
+        for (let i = 0; i < n; i++) {
+            const a = frame[i];
+            const b = frame[i + lag];
+            dot += a * b;
+            energyA += a * a;
+            energyB += b * b;
         }
 
-        if (correlation > maxCorrelation) {
-            maxCorrelation = correlation;
+        const denom = Math.sqrt(energyA * energyB);
+        const score = denom > 0 ? dot / denom : 0;
+        scores[lag] = score;
+
+        if (score > bestScore) {
+            bestScore = score;
             bestLag = lag;
         }
     }
 
-    if (bestLag === 0) return 0;
+    if (bestLag === 0 || bestScore < VOICING_THRESHOLD) {
+        return { hz: 0, confidence: bestScore > 0 ? bestScore : 0 };
+    }
 
-    const pitch = sampleRate / bestLag;
-    return pitch >= minPitch && pitch <= maxPitch ? pitch : 0;
+    // Parabolic interpolation around the peak for sub-sample lag resolution.
+    let refinedLag = bestLag;
+    if (bestLag > minLag && bestLag < maxLag) {
+        const prev = scores[bestLag - 1];
+        const curr = scores[bestLag];
+        const next = scores[bestLag + 1];
+        const denom = 2 * (2 * curr - prev - next);
+        if (denom !== 0) {
+            refinedLag = bestLag + (next - prev) / denom;
+        }
+    }
+
+    const hz = sampleRate / refinedLag;
+    if (hz < MIN_PITCH_HZ || hz > MAX_PITCH_HZ) {
+        return { hz: 0, confidence: bestScore };
+    }
+
+    return { hz, confidence: bestScore };
 };
 
 /**
- * Extract RMS energy from frame
+ * @param {Float32Array} frame
+ * @param {number} sampleRate
+ * @returns {number} Pitch in Hz, 0 if unvoiced
+ */
+export const extractPitch = (frame, sampleRate) => extractPitchDetailed(frame, sampleRate).hz;
+
+/**
  * @param {Float32Array} frame
  * @returns {number} RMS energy
  */
 export const extractRMS = (frame) => {
+    if (frame.length === 0) return 0;
     let sumSquares = 0;
-    for (let i = 0; i < frame.length; i++) {
-        sumSquares += frame[i] * frame[i];
-    }
+    for (let i = 0; i < frame.length; i++) sumSquares += frame[i] * frame[i];
     return Math.sqrt(sumSquares / frame.length);
 };
 
 /**
- * Extract Zero Crossing Rate
  * @param {Float32Array} frame
- * @returns {number} ZCR (0-1)
+ * @returns {number} Zero crossing rate (0-1)
  */
 export const extractZCR = (frame) => {
+    if (frame.length < 2) return 0;
     let zeroCrossings = 0;
     for (let i = 1; i < frame.length; i++) {
-        if ((frame[i] >= 0 && frame[i - 1] < 0) ||
-            (frame[i] < 0 && frame[i - 1] >= 0)) {
-            zeroCrossings++;
-        }
+        const prev = frame[i - 1];
+        const curr = frame[i];
+        if ((curr >= 0 && prev < 0) || (curr < 0 && prev >= 0)) zeroCrossings++;
     }
     return zeroCrossings / frame.length;
 };
 
 /**
- * Extract spectral centroid (brightness)
  * @param {Float32Array} frame
  * @param {number} sampleRate
  * @returns {number} Spectral centroid in Hz
@@ -97,24 +167,29 @@ export const extractZCR = (frame) => {
 export const extractSpectralCentroid = (frame, sampleRate) => {
     try {
         const features = Meyda.extract(['spectralCentroid'], frame, sampleRate);
-        return features.spectralCentroid || 0;
+        if (features?.spectralCentroid == null) return 0;
+        // Meyda reports the centroid as a bin index; convert to Hz so the value
+        // is comparable against a physical baseline.
+        const binCount = frame.length / 2;
+        return (features.spectralCentroid / binCount) * (sampleRate / 2);
     } catch (error) {
-        console.error('Spectral centroid extraction failed:', error);
+        lastExtractionError = `Spectral centroid extraction failed: ${error.message}`;
         return 0;
     }
 };
 
 /**
- * Extract all features from a single frame
  * @param {Float32Array} frame
  * @param {number} sampleRate
  * @param {number} numMFCC
- * @returns {Object} All features
+ * @returns {Object}
  */
-export const extractAllFeatures = (frame, sampleRate, numMFCC = 40) => {
+export const extractAllFeatures = (frame, sampleRate, numMFCC = NUM_MFCC) => {
+    const pitch = extractPitchDetailed(frame, sampleRate);
     return {
         mfcc: extractMFCC(frame, sampleRate, numMFCC),
-        pitch: extractPitch(frame, sampleRate),
+        pitch: pitch.hz,
+        pitchConfidence: pitch.confidence,
         rms: extractRMS(frame),
         zcr: extractZCR(frame),
         spectralCentroid: extractSpectralCentroid(frame, sampleRate),
@@ -122,16 +197,17 @@ export const extractAllFeatures = (frame, sampleRate, numMFCC = 40) => {
 };
 
 /**
- * Build feature matrix from multiple frames
- * @param {Float32Array[]} frames - Array of audio frames
+ * Build a time-ordered feature matrix from consecutive frames.
+ * @param {Float32Array[]} frames
  * @param {number} sampleRate
  * @param {number} numMFCC
- * @returns {Object} Feature matrix and metadata
+ * @returns {Object}
  */
-export const buildFeatureMatrix = (frames, sampleRate, numMFCC = 40) => {
+export const buildFeatureMatrix = (frames, sampleRate, numMFCC = NUM_MFCC) => {
     const featureMatrix = {
-        mfcc: [], // [time, mfcc_coeffs]
+        mfcc: [],
         pitch: [],
+        pitchConfidence: [],
         rms: [],
         zcr: [],
         spectralCentroid: [],
@@ -140,31 +216,46 @@ export const buildFeatureMatrix = (frames, sampleRate, numMFCC = 40) => {
 
     frames.forEach((frame, index) => {
         const features = extractAllFeatures(frame, sampleRate, numMFCC);
-
         featureMatrix.mfcc.push(Array.from(features.mfcc));
         featureMatrix.pitch.push(features.pitch);
+        featureMatrix.pitchConfidence.push(features.pitchConfidence);
         featureMatrix.rms.push(features.rms);
         featureMatrix.zcr.push(features.zcr);
         featureMatrix.spectralCentroid.push(features.spectralCentroid);
-        featureMatrix.timestamps.push(index * 0.025); // 25ms frames
+        featureMatrix.timestamps.push((index * frame.length) / 2 / sampleRate);
     });
 
     return featureMatrix;
 };
 
 /**
- * Calculate feature statistics (for rule-based inference)
+ * Summary statistics, computed in a single pass so large arrays do not risk
+ * a stack overflow from spreading into Math.min/Math.max.
  * @param {number[]} values
- * @returns {Object} Statistics
+ * @returns {{mean: number, std: number, variance: number, min: number, max: number}}
  */
 export const calculateStats = (values) => {
-    if (values.length === 0) return { mean: 0, std: 0, variance: 0, min: 0, max: 0 };
+    if (!values || values.length === 0) {
+        return { mean: 0, std: 0, variance: 0, min: 0, max: 0 };
+    }
 
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+    }
+    const mean = sum / values.length;
 
-    return { mean, std, variance, min, max };
+    let sqDiff = 0;
+    for (let i = 0; i < values.length; i++) {
+        const d = values[i] - mean;
+        sqDiff += d * d;
+    }
+    const variance = sqDiff / values.length;
+
+    return { mean, std: Math.sqrt(variance), variance, min, max };
 };
