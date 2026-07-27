@@ -1,148 +1,202 @@
 /**
  * Audio Processing Module
- * Handles noise reduction, VAD, and rolling window buffering
+ * Rolling buffer, voice activity detection, and framing for feature extraction.
+ *
+ * Two things here are load-bearing and easy to get wrong:
+ *
+ *  1. Frames handed to Meyda MUST be a power of two. Meyda throws
+ *     "Buffer size must be a power of 2" otherwise, and because the callers
+ *     wrap extraction in try/catch, a wrong frame size fails silently and
+ *     every MFCC/centroid value comes back as zero.
+ *
+ *  2. We do not zero out quiet samples before feature extraction. Hard-gating
+ *     a waveform introduces step discontinuities, which spread broadband
+ *     energy across the spectrum and corrupt exactly the features we measure.
+ *     Noise is handled by measuring the floor and compensating during
+ *     inference instead.
  */
+
+/** Frame length in samples. Power of two — required by Meyda. */
+export const FRAME_SIZE = 512;
+
+/** Hop between frames (50% overlap), standard for short-time analysis. */
+export const HOP_SIZE = FRAME_SIZE / 2;
 
 class AudioProcessor {
     constructor(sampleRate = 16000) {
         this.sampleRate = sampleRate;
-        this.rollingBuffer = [];
-        this.maxBufferSize = sampleRate * 2; // 2 seconds
-        this.noiseThreshold = 0.01; // Adaptive
+        this.maxBufferSize = Math.floor(sampleRate * 2); // 2 seconds
+
+        // Ring buffer — avoids reallocating a JS array of thousands of floats
+        // every poll.
+        this.buffer = new Float32Array(this.maxBufferSize);
+        this.writeIndex = 0;
+        this.filled = 0;
+
+        this.noiseFloor = 0;
         this.vadEnergyThreshold = 0.02;
-        this.vadZCRThreshold = 0.3;
+        this.vadZCRThresholdHigh = 0.3;
+        this.vadZCRThresholdLow = 0.05;
+
+        this.window = makeHannWindow(FRAME_SIZE);
     }
 
     /**
-     * Apply noise gate (simple threshold-based noise reduction)
-     * @param {Float32Array} audioBuffer
-     * @returns {Float32Array}
+     * Rebuild for a different sample rate (e.g. the browser ignored our request).
+     * @param {number} sampleRate
      */
-    applyNoiseReduction(audioBuffer) {
-        const cleaned = new Float32Array(audioBuffer.length);
-
-        for (let i = 0; i < audioBuffer.length; i++) {
-            // Noise gate: suppress signals below threshold
-            if (Math.abs(audioBuffer[i]) < this.noiseThreshold) {
-                cleaned[i] = 0;
-            } else {
-                cleaned[i] = audioBuffer[i];
-            }
-        }
-
-        return cleaned;
+    setSampleRate(sampleRate) {
+        if (sampleRate === this.sampleRate) return;
+        this.sampleRate = sampleRate;
+        this.maxBufferSize = Math.floor(sampleRate * 2);
+        this.buffer = new Float32Array(this.maxBufferSize);
+        this.writeIndex = 0;
+        this.filled = 0;
     }
 
     /**
-     * Voice Activity Detection (energy + ZCR based)
+     * Voice activity detection on the raw (ungated) signal.
+     * Speech has both meaningful energy and a mid-range zero-crossing rate;
+     * hiss has high ZCR with low energy, rumble has low ZCR.
      * @param {Float32Array} audioBuffer
-     * @returns {boolean} true if voice detected
+     * @returns {boolean}
      */
     detectVoiceActivity(audioBuffer) {
-        // Calculate RMS energy
-        let sumSquares = 0;
-        for (let i = 0; i < audioBuffer.length; i++) {
-            sumSquares += audioBuffer[i] * audioBuffer[i];
-        }
-        const rms = Math.sqrt(sumSquares / audioBuffer.length);
+        const rms = computeRMS(audioBuffer);
 
-        // Calculate Zero Crossing Rate
         let zeroCrossings = 0;
         for (let i = 1; i < audioBuffer.length; i++) {
-            if ((audioBuffer[i] >= 0 && audioBuffer[i - 1] < 0) ||
-                (audioBuffer[i] < 0 && audioBuffer[i - 1] >= 0)) {
-                zeroCrossings++;
-            }
+            const prev = audioBuffer[i - 1];
+            const curr = audioBuffer[i];
+            if ((curr >= 0 && prev < 0) || (curr < 0 && prev >= 0)) zeroCrossings++;
         }
         const zcr = zeroCrossings / audioBuffer.length;
 
-        // Voice has moderate energy and moderate ZCR
-        // Noise has low energy, silence has low energy and low ZCR
-        const hasEnergy = rms > this.vadEnergyThreshold;
-        const hasVoicelike = zcr > 0.05 && zcr < this.vadZCRThreshold;
+        // Require the signal to sit clearly above the measured ambient floor,
+        // so a noisy room raises the bar rather than triggering constantly.
+        const energyFloor = Math.max(this.vadEnergyThreshold, this.noiseFloor * 2.5);
 
-        return hasEnergy && hasVoicelike;
+        const hasEnergy = rms > energyFloor;
+        const hasVoiceShape = zcr > this.vadZCRThresholdLow && zcr < this.vadZCRThresholdHigh;
+
+        return hasEnergy && hasVoiceShape;
     }
 
     /**
-     * Add samples to rolling buffer
+     * Track the ambient noise floor from a segment known to contain no speech.
+     * @param {Float32Array} audioBuffer
+     */
+    updateNoiseFloor(audioBuffer) {
+        const rms = computeRMS(audioBuffer);
+        // Slow exponential update so a single door slam does not move the floor.
+        this.noiseFloor = this.noiseFloor === 0 ? rms : this.noiseFloor * 0.9 + rms * 0.1;
+    }
+
+    /** @returns {number} Current ambient noise floor estimate */
+    getNoiseFloor() {
+        return this.noiseFloor;
+    }
+
+    /**
+     * Append samples to the rolling buffer.
      * @param {Float32Array} samples
      */
     addToRollingBuffer(samples) {
-        // Add new samples
         for (let i = 0; i < samples.length; i++) {
-            this.rollingBuffer.push(samples[i]);
+            this.buffer[this.writeIndex] = samples[i];
+            this.writeIndex = (this.writeIndex + 1) % this.maxBufferSize;
         }
-
-        // Trim to max size (keep latest 2 seconds)
-        if (this.rollingBuffer.length > this.maxBufferSize) {
-            this.rollingBuffer = this.rollingBuffer.slice(-this.maxBufferSize);
-        }
+        this.filled = Math.min(this.filled + samples.length, this.maxBufferSize);
     }
 
     /**
-     * Get rolling window of specified size (in seconds)
-     * @param {number} windowSize - Size in seconds (default 1.5)
+     * Read the most recent `windowSize` seconds in chronological order.
+     * @param {number} windowSize - seconds
      * @returns {Float32Array}
      */
     getRollingWindow(windowSize = 1.5) {
-        const sampleCount = Math.floor(this.sampleRate * windowSize);
-        const start = Math.max(0, this.rollingBuffer.length - sampleCount);
-        return new Float32Array(this.rollingBuffer.slice(start));
+        const want = Math.min(Math.floor(this.sampleRate * windowSize), this.filled);
+        const out = new Float32Array(want);
+        // Walk backwards from the write head so samples come out in order.
+        let read = (this.writeIndex - want + this.maxBufferSize) % this.maxBufferSize;
+        for (let i = 0; i < want; i++) {
+            out[i] = this.buffer[read];
+            read = (read + 1) % this.maxBufferSize;
+        }
+        return out;
     }
 
-    /**
-     * Get the full buffer (last 2 seconds)
-     * @returns {Float32Array}
-     */
-    getFullBuffer() {
-        return new Float32Array(this.rollingBuffer);
+    /** @returns {number} Samples currently buffered */
+    getBufferedSampleCount() {
+        return this.filled;
     }
 
-    /**
-     * Clear the buffer
-     */
+    /** Clear the rolling buffer and noise estimate. */
     clearBuffer() {
-        this.rollingBuffer = [];
+        this.buffer.fill(0);
+        this.writeIndex = 0;
+        this.filled = 0;
+        this.noiseFloor = 0;
     }
 
     /**
-     * Update noise threshold adaptively
+     * Split into overlapping, Hann-windowed frames of FRAME_SIZE samples.
+     * Windowing tapers each frame's edges, which is what makes the FFT-derived
+     * features (MFCC, spectral centroid) meaningful rather than dominated by
+     * the rectangular cut at the frame boundary.
+     *
      * @param {Float32Array} audioBuffer
-     */
-    updateNoiseThreshold(audioBuffer) {
-        // Calculate background noise level (10th percentile)
-        const sorted = Array.from(audioBuffer).map(Math.abs).sort((a, b) => a - b);
-        const percentile10 = sorted[Math.floor(sorted.length * 0.1)];
-
-        // Smooth update
-        this.noiseThreshold = this.noiseThreshold * 0.9 + percentile10 * 0.1;
-    }
-
-    /**
-     * Split audio into frames (25ms each)
-     * @param {Float32Array} audioBuffer
-     * @returns {Float32Array[]} Array of frames
+     * @returns {Float32Array[]} frames, each exactly FRAME_SIZE long
      */
     splitIntoFrames(audioBuffer) {
-        const frameSizeMs = 25;
-        const frameSizeSamples = Math.floor((this.sampleRate / 1000) * frameSizeMs);
         const frames = [];
-
-        for (let i = 0; i + frameSizeSamples <= audioBuffer.length; i += frameSizeSamples) {
-            frames.push(audioBuffer.slice(i, i + frameSizeSamples));
+        for (let start = 0; start + FRAME_SIZE <= audioBuffer.length; start += HOP_SIZE) {
+            const frame = new Float32Array(FRAME_SIZE);
+            for (let i = 0; i < FRAME_SIZE; i++) {
+                frame[i] = audioBuffer[start + i] * this.window[i];
+            }
+            frames.push(frame);
         }
-
         return frames;
     }
 }
 
-// Singleton instance
+/**
+ * Root mean square energy.
+ * @param {Float32Array} buffer
+ * @returns {number}
+ */
+export const computeRMS = (buffer) => {
+    if (buffer.length === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
+    return Math.sqrt(sum / buffer.length);
+};
+
+/**
+ * Periodic Hann window.
+ * @param {number} size
+ * @returns {Float32Array}
+ */
+export const makeHannWindow = (size) => {
+    const w = new Float32Array(size);
+    for (let i = 0; i < size; i++) {
+        w[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / size));
+    }
+    return w;
+};
+
 let processorInstance = null;
 
+/**
+ * @param {number} sampleRate
+ * @returns {AudioProcessor}
+ */
 export const getAudioProcessor = (sampleRate = 16000) => {
     if (!processorInstance) {
         processorInstance = new AudioProcessor(sampleRate);
+    } else {
+        processorInstance.setSampleRate(sampleRate);
     }
     return processorInstance;
 };
@@ -150,3 +204,5 @@ export const getAudioProcessor = (sampleRate = 16000) => {
 export const resetAudioProcessor = () => {
     processorInstance = null;
 };
+
+export const createAudioProcessor = (sampleRate = 16000) => new AudioProcessor(sampleRate);
