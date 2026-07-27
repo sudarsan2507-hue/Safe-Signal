@@ -1,149 +1,175 @@
 import { useState } from 'react';
-import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { loadContacts, saveContacts } from '../utils/storage';
 import './ContactScreen.css';
+
+/**
+ * Emergency contacts.
+ *
+ * Contacts are loaded from storage on mount. Without that, the screen started
+ * from an empty list and the first save overwrote every previously stored
+ * contact — silently losing exactly the data the app depends on.
+ */
+
+/** Accepts international and local formats; rejects obvious nonsense. */
+const PHONE_PATTERN = /^\+?[\d\s\-().]{6,20}$/;
 
 const ContactScreen = () => {
     const navigate = useNavigate();
-    const [contacts, setContacts] = useState([]);
+
+    // Read straight from storage during initialisation. Starting from an empty
+    // list and filling it in later meant the first save overwrote every
+    // previously stored contact.
+    const [contacts, setContacts] = useState(loadContacts);
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
+    const [error, setError] = useState('');
+    const [saveFailed, setSaveFailed] = useState(false);
 
-    const addContact = () => {
-        if (name.trim() && phone.trim()) {
-            const newContact = { id: Date.now(), name, phone };
-            const updatedContacts = [...contacts, newContact];
-            setContacts(updatedContacts);
-
-            // Save to localStorage
-            localStorage.setItem('emergencyContacts', JSON.stringify(updatedContacts));
-
-            // Clear form
-            setName('');
-            setPhone('');
-        }
+    /**
+     * @param {Array} next
+     */
+    const persist = (next) => {
+        setContacts(next);
+        setSaveFailed(!saveContacts(next));
     };
 
+    const addContact = (event) => {
+        event.preventDefault();
+
+        const trimmedName = name.trim();
+        const trimmedPhone = phone.trim();
+
+        if (!trimmedName) {
+            setError('Please add a name so you know who this is.');
+            return;
+        }
+        if (!PHONE_PATTERN.test(trimmedPhone)) {
+            setError('That phone number does not look right. Include the country code if you can.');
+            return;
+        }
+        if (contacts.some((c) => c.phone.replace(/\D/g, '') === trimmedPhone.replace(/\D/g, ''))) {
+            setError('That number is already saved.');
+            return;
+        }
+
+        setError('');
+        persist([
+            ...contacts,
+            {
+                id: crypto.randomUUID?.() ?? `c-${Date.now()}`,
+                name: trimmedName,
+                phone: trimmedPhone,
+            },
+        ]);
+        setName('');
+        setPhone('');
+    };
+
+    /**
+     * @param {string} id
+     */
     const removeContact = (id) => {
-        const updatedContacts = contacts.filter((contact) => contact.id !== id);
-        setContacts(updatedContacts);
-        localStorage.setItem('emergencyContacts', JSON.stringify(updatedContacts));
-    };
-
-    const handleContinue = () => {
-        if (contacts.length > 0) {
-            navigate('/dashboard');
-        } else {
-            alert('Please add at least one emergency contact to continue.');
-        }
+        persist(contacts.filter((contact) => contact.id !== id));
     };
 
     return (
         <div className="page contact-screen">
-            <motion.div
-                className="contact-container"
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6 }}
-            >
-                {/* Header */}
-                <motion.div
-                    className="header"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.2 }}
-                >
-                    <h2>Emergency Contacts</h2>
-                    <p className="subtitle">
-                        Add trusted people who will be notified in an emergency
+            <div className="screen-inner">
+                <header className="screen-header">
+                    <h1>Who should we reach?</h1>
+                    <p className="screen-subtitle">
+                        These are the people SafeSignal will prepare a message for. Choose someone
+                        who would pick up.
                     </p>
-                </motion.div>
+                </header>
 
-                {/* Add Contact Form */}
-                <motion.div
-                    className="add-contact-form card"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.4 }}
-                >
-                    <input
-                        type="text"
-                        placeholder="Contact Name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        className="input-field"
-                    />
-                    <input
-                        type="tel"
-                        placeholder="Phone Number"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="input-field"
-                    />
-                    <button className="btn-secondary add-btn" onClick={addContact}>
-                        ➕ Add Contact
+                <form className="contact-form" onSubmit={addContact} noValidate>
+                    <div className="field">
+                        <label htmlFor="contact-name">Name</label>
+                        <input
+                            id="contact-name"
+                            type="text"
+                            value={name}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder="Priya"
+                            autoComplete="name"
+                        />
+                    </div>
+
+                    <div className="field">
+                        <label htmlFor="contact-phone">Phone number</label>
+                        <input
+                            id="contact-phone"
+                            type="tel"
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value)}
+                            placeholder="+91 98765 43210"
+                            autoComplete="tel"
+                            aria-describedby={error ? 'contact-error' : undefined}
+                            aria-invalid={Boolean(error)}
+                        />
+                    </div>
+
+                    {error && (
+                        <p className="field-error" id="contact-error" role="alert">
+                            {error}
+                        </p>
+                    )}
+
+                    <button type="submit" className="btn-secondary">
+                        Add contact
                     </button>
-                </motion.div>
+                </form>
 
-                {/* Contact List */}
-                {contacts.length > 0 && (
-                    <motion.div
-                        className="contact-list"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: 0.6 }}
-                    >
-                        <h3>Saved Contacts ({contacts.length})</h3>
-                        {contacts.map((contact, index) => (
-                            <motion.div
-                                key={contact.id}
-                                className="contact-item card"
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.1 * index }}
-                            >
-                                <div className="contact-info">
-                                    <span className="contact-icon">👤</span>
-                                    <div>
-                                        <h4>{contact.name}</h4>
-                                        <p>{contact.phone}</p>
-                                    </div>
-                                </div>
-                                <button
-                                    className="remove-btn"
-                                    onClick={() => removeContact(contact.id)}
-                                >
-                                    ✕
-                                </button>
-                            </motion.div>
-                        ))}
-                    </motion.div>
+                {saveFailed && (
+                    <p className="field-error" role="alert">
+                        Your contacts could not be saved on this device. Private browsing usually
+                        blocks storage — try a normal window.
+                    </p>
                 )}
 
-                {/* CTA Button */}
-                <motion.button
-                    className={`btn-primary cta-button ${contacts.length === 0 ? 'disabled' : ''}`}
-                    onClick={handleContinue}
-                    disabled={contacts.length === 0}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.8 }}
-                    whileHover={contacts.length > 0 ? { scale: 1.05 } : {}}
-                    whileTap={contacts.length > 0 ? { scale: 0.95 } : {}}
-                >
-                    Save & Activate Protection
-                </motion.button>
+                {contacts.length > 0 && (
+                    <section className="contact-list" aria-label="Saved contacts">
+                        <h2 className="section-title">
+                            Saved {contacts.length === 1 ? 'contact' : 'contacts'} ({contacts.length})
+                        </h2>
+                        <ul>
+                            {contacts.map((contact) => (
+                                <li key={contact.id} className="contact-item">
+                                    <div className="contact-details">
+                                        <span className="contact-name">{contact.name}</span>
+                                        <span className="contact-phone">{contact.phone}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="icon-button"
+                                        onClick={() => removeContact(contact.id)}
+                                        aria-label={`Remove ${contact.name}`}
+                                    >
+                                        Remove
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
 
-                {/* Info Text */}
-                <motion.p
-                    className="info-text"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 1 }}
-                >
-                    💡 You can add or edit contacts later from settings
-                </motion.p>
-            </motion.div>
+                <div className="screen-actions">
+                    <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={() => navigate('/dashboard')}
+                        disabled={contacts.length === 0}
+                    >
+                        {contacts.length === 0 ? 'Add a contact to continue' : 'Continue'}
+                    </button>
+                </div>
+
+                <p className="screen-note">
+                    Contacts stay on this device. SafeSignal has no server and cannot upload them.
+                </p>
+            </div>
         </div>
     );
 };

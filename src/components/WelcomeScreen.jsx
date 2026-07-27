@@ -1,120 +1,74 @@
-import { useState } from 'react';
-import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import './WelcomeScreen.css';
 
+/**
+ * First-run screen.
+ *
+ * The copy promises only what the app does. Earlier wording claimed encrypted
+ * data and background monitoring, neither of which was true — for a safety
+ * tool, an overstated promise is a defect, not marketing.
+ */
 const WelcomeScreen = () => {
-  const navigate = useNavigate();
+    const navigate = useNavigate();
 
-  return (
-    <div className="page welcome-screen">
-      <motion.div
-        className="welcome-container"
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8 }}
-      >
-        {/* Logo */}
-        <motion.div
-          className="logo-container"
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ delay: 0.2, type: 'spring', stiffness: 200 }}
-        >
-          <div className="logo-circle">
-            <svg
-              width="80"
-              height="80"
-              viewBox="0 0 80 80"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <circle cx="40" cy="40" r="38" stroke="url(#gradient)" strokeWidth="4" />
-              <path
-                d="M40 20 L40 35 M40 45 L40 60 M25 40 L60 40"
-                stroke="url(#gradient)"
-                strokeWidth="4"
-                strokeLinecap="round"
-              />
-              <defs>
-                <linearGradient id="gradient" x1="0" y1="0" x2="80" y2="80">
-                  <stop offset="0%" stopColor="#3b82f6" />
-                  <stop offset="100%" stopColor="#10b981" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-        </motion.div>
+    return (
+        <div className="page welcome-screen">
+            <div className="screen-inner welcome-inner">
+                <div className="welcome-mark" aria-hidden="true">
+                    <svg viewBox="0 0 96 96" width="72" height="72" fill="none">
+                        <circle cx="48" cy="48" r="44" className="mark-ring" strokeWidth="4" />
+                        <path
+                            d="M48 26c6 6 13 9 20 9v14c0 14-8 22-20 27-12-5-20-13-20-27V35c7 0 14-3 20-9Z"
+                            className="mark-shield"
+                            strokeWidth="4"
+                            strokeLinejoin="round"
+                        />
+                    </svg>
+                </div>
 
-        {/* Title */}
-        <motion.h1
-          className="title"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
-        >
-          SafeSignal
-        </motion.h1>
+                <h1 className="welcome-title">SafeSignal</h1>
+                <p className="welcome-tagline">A quiet way to ask for help.</p>
 
-        {/* Tagline */}
-        <motion.div
-          className="tagline-container"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.6 }}
-        >
-          <p className="tagline">Protection when you cannot speak.</p>
-          <p className="subtitle">
-            Silent, intelligent emergency response powered by AI
-          </p>
-        </motion.div>
+                <p className="welcome-body">
+                    SafeSignal watches for a hand signal, tension in your voice, and sudden
+                    movement. When something looks wrong, it gets a message ready for the people
+                    you trust — and always gives you a chance to stop it.
+                </p>
 
-        {/* Features Preview */}
-        <motion.div
-          className="features-preview"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
-        >
-          <div className="feature-item">
-            <span className="feature-icon">👁️</span>
-            <span className="feature-text">Gesture Detection</span>
-          </div>
-          <div className="feature-item">
-            <span className="feature-icon">🎤</span>
-            <span className="feature-text">Voice Analysis</span>
-          </div>
-          <div className="feature-item">
-            <span className="feature-icon">📍</span>
-            <span className="feature-text">Location Sharing</span>
-          </div>
-        </motion.div>
+                <ul className="welcome-points">
+                    <li>
+                        <span className="point-title">Nothing leaves your device</span>
+                        <span className="point-detail">
+                            Camera and microphone are analysed here. No recordings, no uploads, no account.
+                        </span>
+                    </li>
+                    <li>
+                        <span className="point-title">You are always in control</span>
+                        <span className="point-detail">
+                            Every alert waits ten seconds first, and one tap stops it.
+                        </span>
+                    </li>
+                    <li>
+                        <span className="point-title">It works with what you allow</span>
+                        <span className="point-detail">
+                            Turn on only the sensors you want. SafeSignal tells you what it is using.
+                        </span>
+                    </li>
+                </ul>
 
-        {/* CTA Button */}
-        <motion.button
-          className="btn-primary cta-button"
-          onClick={() => navigate('/permissions')}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1 }}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
-          Get Started
-        </motion.button>
+                <div className="screen-actions">
+                    <button type="button" className="btn-primary" onClick={() => navigate('/permissions')}>
+                        Get started
+                    </button>
+                </div>
 
-        {/* Footer Text */}
-        <motion.p
-          className="footer-text"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.2 }}
-        >
-          Your safety, our priority
-        </motion.p>
-      </motion.div>
-    </div>
-  );
+                <p className="screen-note">
+                    SafeSignal cannot contact emergency services for you. In an emergency, call your
+                    local emergency number.
+                </p>
+            </div>
+        </div>
+    );
 };
 
 export default WelcomeScreen;
