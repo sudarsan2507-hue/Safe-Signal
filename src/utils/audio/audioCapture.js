@@ -1,7 +1,19 @@
 /**
  * Audio Capture Module
- * Handles microphone initialization at 16kHz mono
+ * Requests a mono microphone stream and exposes an AnalyserNode for analysis.
+ *
+ * The analyser buffer is deliberately large: the pipeline polls it every
+ * POLL_INTERVAL_MS, and getFloatTimeDomainData only ever returns the most
+ * recent `fftSize` samples. If fftSize covered less time than the poll
+ * interval, the gap between polls would simply never be analysed. Sizing the
+ * buffer to cover at least one full poll interval keeps coverage continuous.
  */
+
+/** How often the pipeline polls the analyser (kept in sync with audioPipeline) */
+export const POLL_INTERVAL_MS = 500;
+
+/** Preferred capture rate. Browsers may ignore this and pick their own. */
+const PREFERRED_SAMPLE_RATE = 16000;
 
 let audioContext = null;
 let audioStream = null;
@@ -9,115 +21,111 @@ let analyserNode = null;
 let sourceNode = null;
 
 /**
- * Initialize audio capture at 16kHz mono
- * @returns {Promise<{context: AudioContext, stream: MediaStream, analyser: AnalyserNode}>}
+ * Choose an fftSize (power of two) whose duration covers the poll interval.
+ * @param {number} sampleRate
+ * @returns {number} fftSize between 2048 and 32768
+ */
+const chooseFftSize = (sampleRate) => {
+    const needed = (sampleRate * POLL_INTERVAL_MS) / 1000;
+    let size = 2048;
+    while (size < needed && size < 32768) size *= 2;
+    return size;
+};
+
+/**
+ * Initialize microphone capture.
+ * @returns {Promise<{context: AudioContext, stream: MediaStream, analyser: AnalyserNode, sampleRate: number}>}
  */
 export const initAudioCapture = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser cannot access the microphone.');
+    }
+
     try {
-        // Request microphone access
         audioStream = await navigator.mediaDevices.getUserMedia({
             audio: {
-                channelCount: 1, // Mono
-                sampleRate: 16000, // 16kHz
+                channelCount: 1,
+                sampleRate: PREFERRED_SAMPLE_RATE,
                 echoCancellation: true,
-                noiseSuppression: false, // We'll do custom noise reduction
+                // Browser noise suppression would flatten the very features we
+                // measure (spectral shape, energy dynamics), so we opt out and
+                // handle noise ourselves.
+                noiseSuppression: false,
                 autoGainControl: false,
             },
         });
 
-        // Create AudioContext at 16kHz
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({
-            sampleRate: 16000,
-        });
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        try {
+            audioContext = new Ctor({ sampleRate: PREFERRED_SAMPLE_RATE });
+        } catch {
+            // Some browsers reject an explicit sampleRate — fall back to default.
+            audioContext = new Ctor();
+        }
 
-        // Create source node from stream
+        // Autoplay policies can start the context suspended.
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume().catch(() => { });
+        }
+
         sourceNode = audioContext.createMediaStreamSource(audioStream);
 
-        // Create analyser for FFT and waveform
         analyserNode = audioContext.createAnalyser();
-        analyserNode.fftSize = 2048;
+        analyserNode.fftSize = chooseFftSize(audioContext.sampleRate);
         analyserNode.smoothingTimeConstant = 0;
 
-        // Connect source to analyzer
         sourceNode.connect(analyserNode);
-
-        console.log('🎤 Audio capture initialized at 16kHz mono');
 
         return {
             context: audioContext,
             stream: audioStream,
             analyser: analyserNode,
             source: sourceNode,
+            sampleRate: audioContext.sampleRate,
         };
     } catch (error) {
-        console.error('Failed to initialize audio capture:', error);
-        throw new Error('Microphone access denied or not available');
+        releaseAudioCapture();
+        if (error?.name === 'NotAllowedError') {
+            throw new Error('Microphone permission was denied.');
+        }
+        if (error?.name === 'NotFoundError') {
+            throw new Error('No microphone was found on this device.');
+        }
+        throw new Error('The microphone could not be started.');
     }
 };
 
-/**
- * Get audio stream
- * @returns {MediaStream | null}
- */
-export const getAudioStream = () => {
-    return audioStream;
-};
+/** @returns {MediaStream | null} */
+export const getAudioStream = () => audioStream;
 
-/**
- * Get audio context
- * @returns {AudioContext | null}
- */
-export const getAudioContext = () => {
-    return audioContext;
-};
+/** @returns {AudioContext | null} */
+export const getAudioContext = () => audioContext;
 
-/**
- * Get analyser node for FFT/waveform
- * @returns {AnalyserNode | null}
- */
-export const getAnalyserNode = () => {
-    return analyserNode;
-};
+/** @returns {AnalyserNode | null} */
+export const getAnalyserNode = () => analyserNode;
 
-/**
- * Get current sample rate
- * @returns {number}
- */
-export const getSampleRate = () => {
-    return audioContext ? audioContext.sampleRate : 16000;
-};
+/** @returns {number} The real capture sample rate (not the requested one) */
+export const getSampleRate = () => (audioContext ? audioContext.sampleRate : PREFERRED_SAMPLE_RATE);
 
-/**
- * Release audio resources
- */
+/** Stop the microphone and tear down the audio graph. */
 export const releaseAudioCapture = () => {
     if (audioStream) {
         audioStream.getTracks().forEach((track) => track.stop());
         audioStream = null;
     }
-
     if (sourceNode) {
         sourceNode.disconnect();
         sourceNode = null;
     }
-
     if (analyserNode) {
         analyserNode.disconnect();
         analyserNode = null;
     }
-
     if (audioContext) {
-        audioContext.close();
+        audioContext.close().catch(() => { });
         audioContext = null;
     }
-
-    console.log('🔇 Audio capture released');
 };
 
-/**
- * Check if audio capture is active
- * @returns {boolean}
- */
-export const isAudioActive = () => {
-    return audioContext !== null && audioContext.state === 'running';
-};
+/** @returns {boolean} */
+export const isAudioActive = () => audioContext !== null && audioContext.state === 'running';
