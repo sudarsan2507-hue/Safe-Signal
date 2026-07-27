@@ -1,13 +1,21 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>safe-signal</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <!-- viewport-fit=cover so the layout reaches under notches and home bars -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="SafeSignal — a quiet way to ask for help. Runs entirely on your device." />
+  <!-- Follows the viewer's theme rather than forcing one. -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f5f2" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#16191a" />
+  <title>SafeSignal</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+
 </html>

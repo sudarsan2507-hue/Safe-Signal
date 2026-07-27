@@ -1,1 +1,6 @@
-/* Removed - Not needed for SafeSignal */
+/* App shell. Screen-level styling lives alongside each component. */
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
