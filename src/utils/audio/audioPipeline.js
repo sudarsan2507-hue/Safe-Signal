@@ -1,29 +1,33 @@
 /**
  * Audio Pipeline Controller
- * Orchestrates the entire audio stress detection pipeline.
+ * Owns the microphone, drives feature extraction, and emits a stress score.
  *
- * Enhancements (v2):
- *  - 5-second baseline calibration phase on start
- *  - Ambient noise floor tracking during silent segments
- *  - Passes baseline + noiseFloor to stressInference for deviation-based scoring
- *  - Emits isCalibrating + baseline in onStressUpdate callback
+ * Calibration note: the calibration window is bounded by wall-clock time, not
+ * by how much speech we happen to hear. Someone walking alone at night is
+ * usually silent — the app's whole premise — so gating the end of calibration
+ * on voiced audio would leave it calibrating forever in the exact situation it
+ * exists for. Instead the window always closes on time, and if no speech was
+ * captured we run without a personal baseline and adopt one opportunistically
+ * the first time the user does speak.
  */
 
-import { initAudioCapture, releaseAudioCapture } from './audioCapture.js';
+import { initAudioCapture, releaseAudioCapture, POLL_INTERVAL_MS } from './audioCapture.js';
 import { getAudioProcessor } from './audioProcessor.js';
-import { buildFeatureMatrix, calculateStats } from './featureExtractor.js';
-import { computeStressScore, calculateAudioRiskWeight, resetStressState } from './stressInference.js';
+import { buildFeatureMatrix, calculateStats, getLastExtractionError, clearExtractionError } from './featureExtractor.js';
+import { StressEstimator } from './stressInference.js';
 import { getTemporalSmoother } from './smoothing.js';
 
-// ─── Constants ─────────────────────────────────────────────────────────────
-
-/** Duration of the calibration phase in milliseconds */
+/** Length of the initial calibration window. */
 const CALIBRATION_DURATION_MS = 5000;
 
-/** Number of silent-frame RMS samples to keep for noise floor estimation */
-const MAX_NOISE_SAMPLES = 20;
+/** Voiced samples needed before a baseline is considered trustworthy. */
+const MIN_BASELINE_SAMPLES = 3;
 
-// ─── Controller ────────────────────────────────────────────────────────────
+/** Rolling analysis window in seconds. */
+const ANALYSIS_WINDOW_S = 1.5;
+
+/** MFCC frames retained for visualisation. */
+const MAX_MFCC_HISTORY = 80;
 
 class AudioPipelineController {
     constructor() {
@@ -32,208 +36,188 @@ class AudioPipelineController {
         this.analyser = null;
         this.processor = null;
         this.smoother = null;
+        this.estimator = new StressEstimator();
         this.processingInterval = null;
+
         this.currentStressScore = 0;
         this.mfccHistory = [];
-        this.maxMFCCHistory = 80; // Last 80 frames (~2 seconds)
 
-        // ── Calibration state ──────────────────────────────────────────────
         this.isCalibrating = false;
         this.calibrationStartTime = null;
-        this.calibrationSamples = []; // Array of { pitch, rms, centroid }
-        this.baseline = null;         // { pitch, rms, centroid } — set after calibration
+        this.calibrationSamples = [];
+        this.baseline = null;
 
-        // ── Noise floor tracking ───────────────────────────────────────────
-        this.noiseSamples = [];       // RMS values from silent frames
-        this.noiseFloor = 0;          // Rolling mean of noiseSamples
-
-        // Callbacks
+        this.sampleRate = 16000;
         this.onStressUpdate = null;
+        this.lastError = null;
     }
 
     /**
-     * Initialize and start the audio pipeline.
-     * Begins a 5-second calibration phase before stress scoring starts.
-     * @param {function} onStressUpdate - Callback for stress score updates
+     * Start capture and analysis.
+     * @param {(update: Object) => void} onStressUpdate
      */
     async start(onStressUpdate) {
-        if (this.isRunning) {
-            console.warn('Audio pipeline already running');
-            return;
-        }
+        if (this.isRunning) return;
 
-        try {
-            // Initialize audio capture
-            const audioSetup = await initAudioCapture();
-            this.audioContext = audioSetup.context;
-            this.analyser = audioSetup.analyser;
+        clearExtractionError();
+        this.onStressUpdate = onStressUpdate;
 
-            // Initialize processor and smoother
-            this.processor = getAudioProcessor(this.audioContext.sampleRate);
-            this.smoother = getTemporalSmoother(5); // 5-second EMA window
+        const audioSetup = await initAudioCapture();
+        this.audioContext = audioSetup.context;
+        this.analyser = audioSetup.analyser;
+        this.sampleRate = audioSetup.sampleRate;
 
-            this.onStressUpdate = onStressUpdate;
-            this.isRunning = true;
+        this.processor = getAudioProcessor(this.sampleRate);
+        this.processor.clearBuffer();
 
-            // ── Start calibration phase ────────────────────────────────────
-            this.isCalibrating = true;
-            this.calibrationStartTime = Date.now();
-            this.calibrationSamples = [];
-            this.baseline = null;
+        this.smoother = getTemporalSmoother(5);
+        this.smoother.reset();
 
-            // Emit initial calibrating state immediately
-            this._emitUpdate(0);
+        this.estimator.reset();
 
-            // Start processing loop (every 500ms)
-            this.processingInterval = setInterval(() => {
-                this.processAudioFrame();
-            }, 500);
+        this.isRunning = true;
+        this.isCalibrating = true;
+        this.calibrationStartTime = Date.now();
+        this.calibrationSamples = [];
+        this.baseline = null;
+        this.mfccHistory = [];
+        this.lastError = null;
 
-            console.log('✅ Audio pipeline started — calibrating for 5 seconds…');
-        } catch (error) {
-            console.error('Failed to start audio pipeline:', error);
-            throw error;
-        }
+        this.emitUpdate(0);
+
+        this.processingInterval = setInterval(() => {
+            this.processAudioFrame();
+        }, POLL_INTERVAL_MS);
     }
 
-    /**
-     * Process a single audio frame (called every 500ms).
-     */
-    async processAudioFrame() {
+    /** Analyse the audio captured since the last poll. */
+    processAudioFrame() {
         if (!this.isRunning || !this.analyser) return;
 
         try {
-            // Get audio data from analyser
-            const bufferLength = this.analyser.fftSize;
-            const timeDataArray = new Float32Array(bufferLength);
-            this.analyser.getFloatTimeDomainData(timeDataArray);
+            const timeData = new Float32Array(this.analyser.fftSize);
+            this.analyser.getFloatTimeDomainData(timeData);
 
-            // Apply noise reduction
-            const cleanedBuffer = this.processor.applyNoiseReduction(timeDataArray);
+            const hasVoice = this.processor.detectVoiceActivity(timeData);
 
-            // Voice Activity Detection
-            const hasVoice = this.processor.detectVoiceActivity(cleanedBuffer);
+            // Close the calibration window on schedule, whether or not anyone
+            // has spoken. This runs before any early return below.
+            const calibrationElapsed = Date.now() - this.calibrationStartTime;
+            if (this.isCalibrating && calibrationElapsed >= CALIBRATION_DURATION_MS) {
+                this.finishCalibration();
+            }
 
-            // ── Noise floor tracking (silent frames only) ──────────────────
             if (!hasVoice) {
-                const silentRMS = _computeRMS(cleanedBuffer);
-                this.noiseSamples.push(silentRMS);
-                if (this.noiseSamples.length > MAX_NOISE_SAMPLES) {
-                    this.noiseSamples.shift();
-                }
-                this.noiseFloor = this.noiseSamples.reduce((a, b) => a + b, 0) / this.noiseSamples.length;
-
-                // No voice → stress = 0 (VAD gate in stressInference will also enforce this)
-                this.updateStressScore(0);
+                this.processor.updateNoiseFloor(timeData);
+                this.updateStressScore(this.estimator.applyLimit(0));
                 return;
             }
 
-            // Add to rolling buffer
-            this.processor.addToRollingBuffer(cleanedBuffer);
+            this.processor.addToRollingBuffer(timeData);
 
-            // Get rolling window (1.5 seconds)
-            const window = this.processor.getRollingWindow(1.5);
-
-            if (window.length < 1000) {
-                // Not enough data yet
-                return;
-            }
-
-            // Split into 25ms frames
+            const window = this.processor.getRollingWindow(ANALYSIS_WINDOW_S);
             const frames = this.processor.splitIntoFrames(window);
-
-            // Extract features
-            const featureMatrix = buildFeatureMatrix(
-                frames,
-                this.audioContext.sampleRate,
-                40 // 40 MFCC coefficients
-            );
-
-            // Store MFCC for visualization
-            this.mfccHistory.push(...featureMatrix.mfcc);
-            if (this.mfccHistory.length > this.maxMFCCHistory) {
-                this.mfccHistory = this.mfccHistory.slice(-this.maxMFCCHistory);
+            if (frames.length < 2) {
+                this.updateStressScore(this.estimator.applyLimit(0));
+                return;
             }
 
-            // ── Calibration phase ──────────────────────────────────────────
-            const elapsed = Date.now() - this.calibrationStartTime;
+            const featureMatrix = buildFeatureMatrix(frames, this.sampleRate);
+
+            const extractionError = getLastExtractionError();
+            if (extractionError && extractionError !== this.lastError) {
+                // Surface it instead of letting silent zeros masquerade as calm.
+                this.lastError = extractionError;
+                console.error('[SafeSignal] audio feature extraction problem:', extractionError);
+            }
+
+            this.mfccHistory.push(...featureMatrix.mfcc);
+            if (this.mfccHistory.length > MAX_MFCC_HISTORY) {
+                this.mfccHistory = this.mfccHistory.slice(-MAX_MFCC_HISTORY);
+            }
+
+            // Collect baseline material while calibrating, and also afterwards
+            // if calibration ended without hearing enough speech.
+            if (this.isCalibrating || !this.baseline) {
+                this.collectCalibrationSample(featureMatrix);
+                if (!this.isCalibrating && this.calibrationSamples.length >= MIN_BASELINE_SAMPLES) {
+                    this.baseline = averageSamples(this.calibrationSamples);
+                }
+            }
 
             if (this.isCalibrating) {
-                // Collect voiced-frame statistics for baseline
-                const voicedPitch = featureMatrix.pitch.filter(p => p > 0);
-                const pitchStats = calculateStats(voicedPitch.length > 0 ? voicedPitch : [0]);
-                const rmsStats = calculateStats(featureMatrix.rms);
-                const centroidStats = calculateStats(featureMatrix.spectralCentroid);
-
-                this.calibrationSamples.push({
-                    pitch: pitchStats.mean,
-                    rms: rmsStats.mean,
-                    centroid: centroidStats.mean,
-                });
-
-                if (elapsed >= CALIBRATION_DURATION_MS) {
-                    // Calibration complete — compute baseline from collected samples
-                    this.baseline = _computeBaseline(this.calibrationSamples);
-                    this.isCalibrating = false;
-                    console.log('🎯 Calibration complete. Baseline:', this.baseline);
-                }
-
-                // During calibration, stress score is always 0
                 this.updateStressScore(0);
                 return;
             }
 
-            // ── Normal stress computation ──────────────────────────────────
-            const rawStressScore = computeStressScore(
+            const raw = this.estimator.update(
                 featureMatrix,
                 this.baseline,
-                this.noiseFloor
+                this.processor.getNoiseFloor(),
             );
 
-            // Apply temporal smoothing (EMA α=0.3, 5-second window)
-            this.smoother.addSample(rawStressScore);
-            const smoothedScore = this.smoother.getSmoothScore();
-
-            this.updateStressScore(smoothedScore);
-
+            this.smoother.addSample(raw);
+            this.updateStressScore(this.smoother.getSmoothScore());
         } catch (error) {
-            console.error('Error processing audio frame:', error);
+            this.lastError = error.message;
+            console.error('[SafeSignal] audio frame processing failed:', error);
         }
     }
 
     /**
-     * Update stress score and notify consumer.
+     * Record one window's worth of baseline statistics.
+     * @param {Object} featureMatrix
+     */
+    collectCalibrationSample(featureMatrix) {
+        const voicedPitch = featureMatrix.pitch.filter((p) => p > 0);
+        if (voicedPitch.length === 0) return;
+
+        this.calibrationSamples.push({
+            pitch: calculateStats(voicedPitch).mean,
+            rms: calculateStats(featureMatrix.rms).mean,
+            centroid: calculateStats(featureMatrix.spectralCentroid).mean,
+        });
+    }
+
+    /** Close the calibration window and build a baseline if we have enough data. */
+    finishCalibration() {
+        this.isCalibrating = false;
+        if (this.calibrationSamples.length >= MIN_BASELINE_SAMPLES) {
+            this.baseline = averageSamples(this.calibrationSamples);
+        } else {
+            // Not enough speech was heard. Run without a personal baseline;
+            // absolute-threshold scoring applies until one can be formed.
+            this.baseline = null;
+        }
+    }
+
+    /**
      * @param {number} score
      */
     updateStressScore(score) {
         this.currentStressScore = score;
-        this._emitUpdate(score);
+        this.emitUpdate(score);
     }
 
     /**
-     * Emit stress update to registered callback.
      * @param {number} score
      */
-    _emitUpdate(score) {
-        if (this.onStressUpdate) {
-            const audioRiskWeight = calculateAudioRiskWeight(score);
-            this.onStressUpdate({
-                stressScore: score,
-                audioRiskWeight,
-                mfccData: this.mfccHistory,
-                analyser: this.analyser,
-                isCalibrating: this.isCalibrating,  // UI can show "Calibrating…"
-                baseline: this.baseline,             // Available for debug mode display
-            });
-        }
+    emitUpdate(score) {
+        if (!this.onStressUpdate) return;
+        this.onStressUpdate({
+            stressScore: score,
+            mfccData: this.mfccHistory,
+            analyser: this.analyser,
+            isCalibrating: this.isCalibrating,
+            baseline: this.baseline,
+            noiseFloor: this.processor?.getNoiseFloor() ?? 0,
+            error: this.lastError,
+        });
     }
 
-    /**
-     * Stop the audio pipeline and reset all state.
-     */
+    /** Stop capture and reset all state. */
     stop() {
         if (!this.isRunning) return;
-
         this.isRunning = false;
 
         if (this.processingInterval) {
@@ -243,73 +227,35 @@ class AudioPipelineController {
 
         releaseAudioCapture();
 
-        if (this.processor) {
-            this.processor.clearBuffer();
-        }
+        this.processor?.clearBuffer();
+        this.smoother?.reset();
+        this.estimator.reset();
 
-        if (this.smoother) {
-            this.smoother.reset();
-        }
-
-        // Reset all enhanced state
         this.mfccHistory = [];
         this.currentStressScore = 0;
         this.isCalibrating = false;
         this.calibrationStartTime = null;
         this.calibrationSamples = [];
         this.baseline = null;
-        this.noiseSamples = [];
-        this.noiseFloor = 0;
-
-        // Reset spike limiter in stressInference
-        resetStressState();
-
-        console.log('🛑 Audio pipeline stopped');
+        this.analyser = null;
+        this.audioContext = null;
+        this.onStressUpdate = null;
     }
 
-    // ── Getters ──────────────────────────────────────────────────────────────
-
-    /** @returns {number} Current stress score */
     getStressScore() { return this.currentStressScore; }
-
-    /** @returns {AnalyserNode} Analyser node for visualization */
     getAnalyser() { return this.analyser; }
-
-    /** @returns {Array} MFCC history for visualization */
     getMFCCHistory() { return this.mfccHistory; }
-
-    /** @returns {boolean} Whether pipeline is active */
     isActive() { return this.isRunning; }
-
-    /** @returns {boolean} Whether calibration is in progress */
     getIsCalibrating() { return this.isCalibrating; }
-
-    /** @returns {Object|null} Calibration baseline { pitch, rms, centroid } */
     getBaseline() { return this.baseline; }
-
-    /** @returns {number} Current estimated ambient noise floor */
-    getNoiseFloor() { return this.noiseFloor; }
+    getNoiseFloor() { return this.processor?.getNoiseFloor() ?? 0; }
 }
 
-// ─── Private Helpers ───────────────────────────────────────────────────────
-
 /**
- * Compute RMS energy of a buffer.
- * @param {Float32Array} buffer
- * @returns {number}
+ * @param {Array<{pitch: number, rms: number, centroid: number}>} samples
+ * @returns {{pitch: number, rms: number, centroid: number}}
  */
-const _computeRMS = (buffer) => {
-    let sum = 0;
-    for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
-    return Math.sqrt(sum / buffer.length);
-};
-
-/**
- * Compute baseline from calibration samples by averaging.
- * @param {Array<{pitch, rms, centroid}>} samples
- * @returns {{ pitch: number, rms: number, centroid: number }}
- */
-const _computeBaseline = (samples) => {
+const averageSamples = (samples) => {
     if (samples.length === 0) return { pitch: 0, rms: 0, centroid: 0 };
     const n = samples.length;
     return {
@@ -319,14 +265,9 @@ const _computeBaseline = (samples) => {
     };
 };
 
-// ─── Singleton ─────────────────────────────────────────────────────────────
-
 let pipelineInstance = null;
 
-/**
- * Get audio pipeline controller singleton.
- * @returns {AudioPipelineController}
- */
+/** @returns {AudioPipelineController} */
 export const getAudioPipeline = () => {
     if (!pipelineInstance) {
         pipelineInstance = new AudioPipelineController();
@@ -334,12 +275,9 @@ export const getAudioPipeline = () => {
     return pipelineInstance;
 };
 
-/**
- * Reset audio pipeline (creates a fresh instance on next getAudioPipeline() call).
- */
 export const resetAudioPipeline = () => {
-    if (pipelineInstance) {
-        pipelineInstance.stop();
-    }
+    pipelineInstance?.stop();
     pipelineInstance = null;
 };
+
+export { AudioPipelineController, CALIBRATION_DURATION_MS };
