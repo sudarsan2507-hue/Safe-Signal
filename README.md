@@ -26,6 +26,49 @@ precise:
 **In a real emergency, call your local emergency number.** SafeSignal is a supplement, not a
 replacement.
 
+## Getting to help quickly
+
+An emergency tool that takes four taps to reach is not an emergency tool.
+
+- **Onboarding runs once.** If a contact is saved, `/` goes straight to the
+  dashboard. Previously every visit walked Welcome → Permissions → Contacts →
+  Dashboard even for a returning user.
+- **`/sos` opens directly into the alert countdown.** No navigation, no taps.
+- **Installable to a home screen.** One tap from the lock screen instead of
+  finding a browser tab. Long-press the icon for shortcuts straight to
+  "Get help now" or a check-in.
+- **Opens without signal.** The service worker caches the app shell, so it
+  starts even offline. Navigations are network-first, so you always get the
+  newest build when you do have a connection.
+
+There is no sign-up, no account and no password — there is no server to hold one.
+
+**What installing does not buy you:** it is still a web app. It cannot run in the
+background, cannot watch sensors while closed, cannot listen for a hardware
+button, and cannot wake itself when a check-in expires — a missed deadline is
+raised when you next open it. Those need a native app or a push backend.
+
+## Check-in timer
+
+The sensors cover *sudden* danger reasonably and *slow, silent* danger badly.
+Someone who is genuinely threatened goes quiet and still — they don't scream,
+and they don't hold a visible gesture up at a camera where an attacker can see
+it. Voice stress needs you to be speaking; the hand signal needs you to act.
+
+The check-in timer inverts that. You say when you expect to be safe, and if you
+don't cancel by then, SafeSignal raises the alert **without you doing anything**.
+The dangerous case requires no action, which is the only thing that works when
+acting is exactly what you cannot do.
+
+- Set a duration (15 min – 2 hours) and optionally a note like "Walking home
+  from the station", which is included in the alert
+- A 60-second grace period after expiry, because forgetting is far more likely
+  than danger and a lapse should not wake your contacts
+- Works with the screen off and the app closed — state is derived from stored
+  timestamps, not a running timer, so a deadline missed while the browser was
+  shut is honoured the moment you reopen it
+- Independent of the protection toggle and of every sensor permission
+
 ## How detection works
 
 ### Sensor fusion
