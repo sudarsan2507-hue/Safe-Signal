@@ -229,6 +229,61 @@ export const buildFeatureMatrix = (frames, sampleRate, numMFCC = NUM_MFCC) => {
 };
 
 /**
+ * Frame-to-frame variability of the pitch period, as a fraction of the mean.
+ *
+ * Deliberately NOT called jitter. True jitter is a cycle-to-cycle measure, and
+ * these frames are ~32 ms — each F0 estimate already averages tens of cycles,
+ * so genuine per-cycle perturbation is smoothed away before it reaches here.
+ * Measured against synthetic speech, a tenfold increase in real jitter moved
+ * this figure only slightly.
+ *
+ * What it does capture is coarser: how much the pitch contour moves between
+ * frames, which mixes prosody with instability. Useful, but weaker evidence
+ * than mean pitch elevation, and weighted accordingly.
+ *
+ * @param {number[]} pitchValues - per-frame F0 in Hz, zeros for unvoiced
+ * @returns {number} variability as a fraction of the mean period
+ */
+export const computePitchVariability = (pitchValues) => {
+    const periods = [];
+    for (const hz of pitchValues) {
+        if (hz > 0) periods.push(1 / hz);
+    }
+    if (periods.length < 3) return 0;
+
+    let absDiffSum = 0;
+    for (let i = 1; i < periods.length; i++) {
+        absDiffSum += Math.abs(periods[i] - periods[i - 1]);
+    }
+    const meanAbsDiff = absDiffSum / (periods.length - 1);
+    const meanPeriod = periods.reduce((a, b) => a + b, 0) / periods.length;
+
+    return meanPeriod > 0 ? meanAbsDiff / meanPeriod : 0;
+};
+
+/**
+ * Frame-to-frame variability of amplitude, as a fraction of the mean.
+ * The energy counterpart of computePitchVariability, and subject to the same
+ * caveat — this is not per-cycle shimmer.
+ *
+ * @param {number[]} amplitudeValues - per-frame RMS
+ * @returns {number} variability as a fraction of the mean
+ */
+export const computeEnergyVariability = (amplitudeValues) => {
+    const values = amplitudeValues.filter((v) => v > 0);
+    if (values.length < 3) return 0;
+
+    let absDiffSum = 0;
+    for (let i = 1; i < values.length; i++) {
+        absDiffSum += Math.abs(values[i] - values[i - 1]);
+    }
+    const meanAbsDiff = absDiffSum / (values.length - 1);
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+
+    return mean > 0 ? meanAbsDiff / mean : 0;
+};
+
+/**
  * Summary statistics, computed in a single pass so large arrays do not risk
  * a stack overflow from spreading into Math.min/Math.max.
  * @param {number[]} values

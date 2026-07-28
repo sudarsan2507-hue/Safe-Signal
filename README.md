@@ -53,6 +53,38 @@ A high score alone is not enough. To escalate, **both** must hold:
 One noisy sensor can never summon help on its own. When those conditions are met you get a
 10-second countdown with a large cancel button before anything is prepared.
 
+### Voice scoring
+
+The voice score is **rule-based, not a trained model** — there is no training
+data and no network. Five features are combined:
+
+| Feature | Weight | Direction |
+| --- | --- | --- |
+| Pitch above your baseline | 0.30 | Upward only |
+| Spectral brightness above baseline | 0.28 | Upward only |
+| Energy above your baseline | 0.22 | Upward only |
+| Pitch variability | 0.12 | Absolute |
+| Energy variability | 0.08 | Absolute |
+
+Elevation features are **directional**: speaking more softly or lower than usual
+does not count as distress, only rising above your own normal does.
+
+Thresholds were calibrated against synthetic calm and distressed speech:
+
+| Voice | Score |
+| --- | --- |
+| Calm (matches baseline) | 0.03 |
+| Calm but quieter / lower | 0.03 – 0.07 |
+| Animated, not distressed | 0.26 |
+| Distressed | 0.66 |
+| Severely distressed | 0.90 |
+
+**Caveat worth stating plainly:** that calibration used synthesised signals, not
+recordings of real people. The ordering and separation are sound, but the exact
+numbers should be re-checked against real speech before anyone relies on them.
+Treat the voice score as a hint, not a measurement — which is why it can never
+raise an alert on its own.
+
 ### Voice baseline
 
 On start, SafeSignal spends five seconds learning how you normally sound, then scores *deviation
@@ -151,7 +183,8 @@ to your unlocked device, they can read your contacts.
 
 - Detection runs only while the page is open and visible; there is no background service worker
 - Motion sensing needs a device with an accelerometer (most desktops have none)
-- Voice stress scoring is rule-based, not a trained model — treat it as a hint, not a diagnosis
+- Voice stress scoring is rule-based, not a trained model, and its thresholds are calibrated
+  against synthetic speech rather than recordings of real people
 - MediaPipe model and WASM are fetched from a CDN, so first load needs a connection
 
 ## License

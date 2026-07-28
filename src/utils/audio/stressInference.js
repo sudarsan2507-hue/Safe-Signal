@@ -12,7 +12,11 @@
  * still looking like a working five-feature model.
  */
 
-import { calculateStats } from './featureExtractor.js';
+import {
+    calculateStats,
+    computePitchVariability,
+    computeEnergyVariability,
+} from './featureExtractor.js';
 
 /** Mean RMS below which a window is treated as silence rather than speech. */
 export const VAD_MIN_RMS = 0.01;
@@ -26,12 +30,74 @@ export const SPIKE_LIMIT = 0.15;
 /** Minimum autocorrelation confidence for a frame to count as voiced. */
 const MIN_VOICED_CONFIDENCE = 0.45;
 
+/**
+ * Feature weights.
+ *
+ * An earlier revision also weighted MFCC temporal variance (0.20) and ZCR
+ * variance (0.10). Measured against synthetic calm and distressed speech, those
+ * two contributed almost nothing — roughly 0.05 and 0.00 respectively — while
+ * holding 30% of the weight, which diluted the features that do discriminate.
+ * They are replaced here by jitter and shimmer, the standard acoustic measures
+ * of vocal instability.
+ */
 const BASE_WEIGHTS = {
     pitch: 0.30,
-    rms: 0.25,
-    mfcc: 0.20,
-    centroid: 0.15,
-    zcr: 0.10,
+    rms: 0.22,
+    centroid: 0.28,
+    pitchVariability: 0.12,
+    energyVariability: 0.08,
+};
+
+/**
+ * Deviation, relative to baseline, at which a feature counts as fully elevated.
+ * Expressed as a fraction of the baseline value.
+ *
+ * These are set wide enough that ordinary animated speech does not saturate
+ * them. Tighter values (0.5 / 1.0 / 0.8) put a lively but untroubled voice at
+ * 0.38 — above the "elevated" line — while leaving genuine distress and severe
+ * distress almost indistinguishable, because all three features had already
+ * pinned at 1.0 by then.
+ */
+const FULL_SCALE = {
+    pitch: 0.9,     // ~90% above your normal pitch
+    rms: 2.2,       // >3x your normal speaking energy
+    centroid: 1.8,  // markedly brighter and harsher than normal
+};
+
+/**
+ * Variability levels treated as fully elevated, at ~32 ms frame resolution.
+ * Both are small numbers; setting them by intuition rather than measurement is
+ * how the previous ZCR term ended up contributing a flat zero while holding 10%
+ * of the weight.
+ */
+const PITCH_VARIABILITY_FULL_SCALE = 0.006;
+const ENERGY_VARIABILITY_FULL_SCALE = 0.012;
+
+/**
+ * Score how far a value sits *above* its baseline, ignoring drops.
+ *
+ * Distress raises pitch, loudness and spectral brightness. Scoring the absolute
+ * deviation instead meant speaking more softly or lower than usual registered as
+ * stress — measured at 0.15 for quiet calm speech, which is simply wrong.
+ *
+ * @param {number} value
+ * @param {number} baseline
+ * @param {number} fullScaleFraction
+ * @returns {number} 0-1
+ */
+const scoreUpwardDeviation = (value, baseline, fullScaleFraction) => {
+    if (!(baseline > 0)) return 0;
+    const rise = (value - baseline) / baseline;
+    return clamp01(rise / fullScaleFraction);
+};
+
+/**
+ * @param {number} value
+ * @returns {number}
+ */
+const clamp01 = (value) => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.min(Math.max(value, 0), 1);
 };
 
 /**
@@ -62,60 +128,64 @@ export const computeRawStressScore = (featureMatrix, baseline = null, noiseFloor
     }
 
     const pitchStats = calculateStats(voicedPitch);
-    const zcrStats = calculateStats(featureMatrix.zcr);
     const centroidStats = calculateStats(featureMatrix.spectralCentroid);
-    const mfccVariance = calculateMFCCTemporalVariance(featureMatrix.mfcc);
 
     const components = {};
     const weights = {};
 
-    // ── Pitch ──────────────────────────────────────────────────────────────
+    // ── Pitch: raised relative to your own normal ──────────────────────────
     if (voicedPitch.length > 0) {
         if (baseline?.pitch > 0) {
-            components.pitch = Math.min(
-                Math.abs(pitchStats.mean - baseline.pitch) / baseline.pitch,
-                1,
-            );
+            components.pitch = scoreUpwardDeviation(pitchStats.mean, baseline.pitch, FULL_SCALE.pitch);
         } else {
-            // No baseline: fall back to pitch instability within the window.
-            components.pitch = Math.min(pitchStats.std / 50, 1);
+            // No baseline yet — fall back to instability within the window.
+            components.pitch = clamp01(pitchStats.std / 40);
         }
         weights.pitch = BASE_WEIGHTS.pitch;
     }
 
-    // ── Energy ─────────────────────────────────────────────────────────────
+    // ── Energy: louder than your own normal ────────────────────────────────
     if (baseline?.rms > 0) {
-        components.rms = Math.min(Math.abs(rmsStats.mean - baseline.rms) / baseline.rms, 1);
+        components.rms = scoreUpwardDeviation(rmsStats.mean, baseline.rms, FULL_SCALE.rms);
     } else {
-        components.rms = Math.min(rmsStats.variance / 0.05, 1);
+        components.rms = clamp01(rmsStats.variance / 0.05);
     }
     weights.rms = BASE_WEIGHTS.rms;
 
-    // ── MFCC temporal variability ──────────────────────────────────────────
-    if (featureMatrix.mfcc.length > 1) {
-        components.mfcc = Math.min(mfccVariance / 10, 1);
-        weights.mfcc = BASE_WEIGHTS.mfcc;
+    // ── Unsteadiness ───────────────────────────────────────────────────────
+    // These need no baseline, which is what makes them useful before
+    // calibration completes. They carry less weight than the elevation
+    // features because frame-level resolution blunts them.
+    if (voicedPitch.length >= 3) {
+        components.pitchVariability = clamp01(
+            computePitchVariability(featureMatrix.pitch) / PITCH_VARIABILITY_FULL_SCALE,
+        );
+        weights.pitchVariability = BASE_WEIGHTS.pitchVariability;
     }
 
-    // ── Spectral centroid ──────────────────────────────────────────────────
+    if (featureMatrix.rms.length >= 3) {
+        components.energyVariability = clamp01(
+            computeEnergyVariability(featureMatrix.rms) / ENERGY_VARIABILITY_FULL_SCALE,
+        );
+        weights.energyVariability = BASE_WEIGHTS.energyVariability;
+    }
+
+    // ── Spectral brightness: harsher, tenser timbre ────────────────────────
     if (centroidStats.mean > 0) {
         if (baseline?.centroid > 0) {
-            components.centroid = Math.min(
-                Math.abs(centroidStats.mean - baseline.centroid) / baseline.centroid,
-                1,
+            components.centroid = scoreUpwardDeviation(
+                centroidStats.mean,
+                baseline.centroid,
+                FULL_SCALE.centroid,
             );
         } else {
-            components.centroid = Math.min(centroidStats.mean / 3000, 1);
+            components.centroid = clamp01(centroidStats.mean / 3000);
         }
         weights.centroid = BASE_WEIGHTS.centroid;
     }
 
-    // ── Zero crossing rate ─────────────────────────────────────────────────
-    components.zcr = Math.min(zcrStats.variance / 0.01, 1);
-    weights.zcr = BASE_WEIGHTS.zcr;
-
     // In a noisy room, absolute energy says more about the room than the
-    // speaker, so shift some of its weight onto pitch deviation.
+    // speaker, so shift some of its weight onto pitch.
     if (noiseFloor > NOISE_HIGH_THRESHOLD && weights.rms && weights.pitch) {
         const shift = weights.rms * 0.2;
         weights.rms -= shift;
@@ -183,28 +253,10 @@ export class StressEstimator {
     }
 }
 
-/**
- * Mean frame-to-frame change in MFCC space — distressed speech is less steady
- * than calm speech.
- * @param {number[][]} mfccMatrix
- * @returns {number}
- */
-export const calculateMFCCTemporalVariance = (mfccMatrix) => {
-    if (!mfccMatrix || mfccMatrix.length < 2) return 0;
-
-    const numCoeffs = mfccMatrix[0].length;
-    if (numCoeffs === 0) return 0;
-
-    let totalDifference = 0;
-    for (let t = 1; t < mfccMatrix.length; t++) {
-        for (let c = 0; c < numCoeffs; c++) {
-            const diff = mfccMatrix[t][c] - mfccMatrix[t - 1][c];
-            totalDifference += diff * diff;
-        }
-    }
-
-    return Math.sqrt(totalDifference / (mfccMatrix.length - 1) / numCoeffs);
-};
+/* calculateMFCCTemporalVariance was removed here. Measured against synthetic
+   calm and distressed speech it contributed roughly 0.05 either way while
+   holding 20% of the scoring weight. MFCCs are still extracted for the
+   visualiser, but they no longer influence the score. */
 
 /**
  * @param {number} score

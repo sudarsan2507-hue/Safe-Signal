@@ -13,12 +13,13 @@ import {
     extractZCR,
     calculateStats,
     buildFeatureMatrix,
+    computePitchVariability,
+    computeEnergyVariability,
 } from '../featureExtractor.js';
 import {
     computeRawStressScore,
     StressEstimator,
     SPIKE_LIMIT,
-    calculateMFCCTemporalVariance,
 } from '../stressInference.js';
 
 const SR = 16000;
@@ -214,7 +215,7 @@ describe('stress inference', () => {
         expect(result.score).toBeLessThan(0.3);
     });
 
-    it('scores higher when speech deviates from the baseline', () => {
+    it('scores higher when speech rises above the baseline', () => {
         const baseline = { pitch: 151, rms: 0.205, centroid: 810 };
         const calm = computeRawStressScore(makeMatrix(), baseline).score;
         const strained = computeRawStressScore(
@@ -222,6 +223,43 @@ describe('stress inference', () => {
             baseline,
         ).score;
         expect(strained).toBeGreaterThan(calm);
+    });
+
+    it('does not treat a quieter, lower voice as stressed', () => {
+        // Scoring the absolute deviation meant speaking softly registered as
+        // distress. Measured at 0.15 for calm quiet speech before this fix.
+        const baseline = { pitch: 200, rms: 0.4, centroid: 1200 };
+        const quietAndLow = computeRawStressScore(
+            makeMatrix({
+                pitch: [120, 122],
+                pitchConfidence: [0.9, 0.9],
+                rms: [0.15, 0.16],
+                spectralCentroid: [500, 520],
+            }),
+            baseline,
+        );
+
+        expect(quietAndLow.components.pitch).toBe(0);
+        expect(quietAndLow.components.rms).toBe(0);
+        expect(quietAndLow.components.centroid).toBe(0);
+        expect(quietAndLow.score).toBeLessThan(0.15);
+    });
+
+    it('leaves headroom above ordinary animated speech', () => {
+        // Previously every elevation feature saturated by the time speech was
+        // merely lively, so genuine distress and severe distress scored alike.
+        const baseline = { pitch: 120, rms: 0.3, centroid: 430 };
+        const animated = computeRawStressScore(
+            makeMatrix({ pitch: [150, 152], rms: [0.4, 0.41], spectralCentroid: [600, 610] }),
+            baseline,
+        ).score;
+        const distressed = computeRawStressScore(
+            makeMatrix({ pitch: [240, 245], rms: [0.9, 0.92], spectralCentroid: [1400, 1450] }),
+            baseline,
+        ).score;
+
+        expect(animated).toBeLessThan(0.3);
+        expect(distressed).toBeGreaterThan(animated + 0.25);
     });
 
     it('renormalises weights when a feature is unavailable', () => {
@@ -279,22 +317,24 @@ describe('StressEstimator', () => {
     });
 });
 
-describe('calculateMFCCTemporalVariance', () => {
-    it('is zero for a steady signal', () => {
-        const steady = [new Array(13).fill(3), new Array(13).fill(3)];
-        expect(calculateMFCCTemporalVariance(steady)).toBe(0);
+describe('variability measures', () => {
+    it('is zero for a perfectly steady signal', () => {
+        expect(computePitchVariability([150, 150, 150, 150])).toBe(0);
+        expect(computeEnergyVariability([0.2, 0.2, 0.2, 0.2])).toBe(0);
     });
 
-    it('grows with frame-to-frame change', () => {
-        const steady = [new Array(13).fill(3), new Array(13).fill(3)];
-        const jumpy = [new Array(13).fill(0), new Array(13).fill(10)];
-        expect(calculateMFCCTemporalVariance(jumpy)).toBeGreaterThan(
-            calculateMFCCTemporalVariance(steady),
-        );
+    it('grows with frame-to-frame movement', () => {
+        const steady = computePitchVariability([150, 150, 150, 150]);
+        const unsteady = computePitchVariability([150, 190, 140, 200]);
+        expect(unsteady).toBeGreaterThan(steady);
     });
 
-    it('handles degenerate input', () => {
-        expect(calculateMFCCTemporalVariance([])).toBe(0);
-        expect(calculateMFCCTemporalVariance(null)).toBe(0);
+    it('ignores unvoiced frames when measuring pitch', () => {
+        expect(computePitchVariability([150, 0, 150, 0, 150])).toBe(0);
+    });
+
+    it('handles too little data', () => {
+        expect(computePitchVariability([150])).toBe(0);
+        expect(computeEnergyVariability([])).toBe(0);
     });
 });
