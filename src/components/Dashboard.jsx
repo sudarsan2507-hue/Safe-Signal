@@ -42,7 +42,17 @@ const IDLE_AUDIO = {
     error: null,
 };
 
-const IDLE_MOTION = { score: 0, available: false, permissionState: 'unknown' };
+const IDLE_MOTION = { score: 0, available: false, permissionState: 'unknown', status: 'waiting' };
+
+/** Plain-language wording for each motion-sensor state. */
+const MOTION_TEXT = {
+    active: 'Active',
+    waiting: 'Starting up…',
+    'no-hardware': 'This device has no motion sensor',
+    stalled: 'Sensor stopped responding',
+    denied: 'Permission not given',
+    unsupported: 'Not available in this browser',
+};
 
 const IDLE_GESTURE = { score: 0, confidence: 0, ready: false };
 
@@ -156,6 +166,7 @@ const Dashboard = () => {
                 score: update.motionScore,
                 available: update.available,
                 permissionState: update.permissionState,
+                status: update.status,
             });
         });
 
@@ -308,7 +319,12 @@ const Dashboard = () => {
     const activeCount = risk.activeSensors.length;
     const level = isProtectionOn ? getRiskLevel(risk.score) : 'safe';
     const statusLabel = isProtectionOn ? getRiskLabel(level) : 'Protection off';
-    const motionSupported = MotionPipelineController.isSupported();
+    // A laptop with no accelerometer can never contribute a third sensor, so
+    // counting it in the total would overstate what this device can do.
+    const motionUsable =
+        MotionPipelineController.isSupported() &&
+        !['no-hardware', 'unsupported', 'denied'].includes(motion.status);
+    const totalSensors = motionUsable ? 3 : 2;
 
     // Drives the wide-screen two-column layout: with no camera or microphone
     // panel there is nothing to place beside the controls.
@@ -390,16 +406,10 @@ const Dashboard = () => {
                         />
                         <SensorToggle
                             label="Movement"
-                            hint={motionSupported ? 'Uses motion sensors' : 'Not available on this device'}
+                            hint="Uses motion sensors"
                             checked={motion.available}
                             disabled
-                            readOnlyReason={
-                                motionSupported
-                                    ? motion.available
-                                        ? 'Active'
-                                        : 'Waiting for sensor data'
-                                    : 'Unavailable'
-                            }
+                            readOnlyReason={MOTION_TEXT[motion.status] ?? MOTION_TEXT.waiting}
                         />
                     </div>
                 )}
@@ -408,7 +418,7 @@ const Dashboard = () => {
                     <p className="coverage-line">
                         {activeCount === 0
                             ? 'No sensors are running yet. Turn one on above so SafeSignal has something to watch.'
-                            : `Watching with ${activeCount} of 3 sensors.`}
+                            : `Watching with ${activeCount} of ${totalSensors} sensor${totalSensors > 1 ? 's' : ''} available on this device.`}
                     </p>
                 )}
             </section>

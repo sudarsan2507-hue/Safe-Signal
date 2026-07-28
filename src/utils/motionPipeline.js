@@ -22,8 +22,18 @@ const SPIKE_REFERENCE = 12;
 /** Readings needed before a score is emitted. */
 const MIN_SAMPLES = 8;
 
-/** If no event arrives within this window, the sensor counts as unavailable. */
+/** Gap after the last event beyond which the stream counts as stalled. */
 const SENSOR_TIMEOUT_MS = 2500;
+
+/**
+ * How long to wait for a first reading before concluding there is no sensor.
+ *
+ * Desktop browsers define DeviceMotionEvent whether or not the machine has an
+ * accelerometer, so feature detection alone cannot tell them apart — the only
+ * reliable signal is that no event ever arrives. Without this the UI would sit
+ * on "waiting for sensor data" forever on every laptop.
+ */
+const SENSOR_PROBE_MS = 3000;
 
 class MotionPipelineController {
     constructor() {
@@ -35,6 +45,9 @@ class MotionPipelineController {
         this.permissionState = 'unknown'; // 'unknown' | 'granted' | 'denied' | 'unsupported'
         this.handler = null;
         this.onUpdate = null;
+        this.hasReceivedData = false;
+        this.probeTimedOut = false;
+        this.probeTimer = null;
     }
 
     /** @returns {boolean} Whether this browser exposes DeviceMotion at all */
@@ -93,6 +106,18 @@ class MotionPipelineController {
         this.isRunning = true;
         this.samples = [];
         this.lastEventTime = 0;
+        this.hasReceivedData = false;
+        this.probeTimedOut = false;
+
+        // If nothing has arrived by now, this device has no usable sensor.
+        this.probeTimer = setTimeout(() => {
+            if (!this.hasReceivedData) {
+                this.probeTimedOut = true;
+                this.emit();
+            }
+        }, SENSOR_PROBE_MS);
+
+        this.emit();
         return true;
     }
 
@@ -106,6 +131,8 @@ class MotionPipelineController {
         const now = Date.now();
         this.lastEventTime = now;
         this.available = true;
+        this.hasReceivedData = true;
+        this.probeTimedOut = false;
 
         // Magnitude minus gravity: roughly zero at rest in any orientation.
         const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
@@ -147,11 +174,25 @@ class MotionPipelineController {
         return Date.now() - this.lastEventTime < SENSOR_TIMEOUT_MS;
     }
 
+    /**
+     * Current sensor state, distinguishing "no hardware" from "not yet".
+     * @returns {'unsupported'|'denied'|'waiting'|'no-hardware'|'stalled'|'active'}
+     */
+    getStatus() {
+        if (this.permissionState === 'unsupported') return 'unsupported';
+        if (this.permissionState === 'denied') return 'denied';
+        if (this.isReceivingData()) return 'active';
+        if (this.hasReceivedData) return 'stalled';
+        if (this.probeTimedOut) return 'no-hardware';
+        return 'waiting';
+    }
+
     emit() {
         this.onUpdate?.({
             motionScore: this.motionScore,
             available: this.available && this.isReceivingData(),
             permissionState: this.permissionState,
+            status: this.getStatus(),
         });
     }
 
@@ -170,11 +211,17 @@ class MotionPipelineController {
             window.removeEventListener('devicemotion', this.handler);
             this.handler = null;
         }
+        if (this.probeTimer) {
+            clearTimeout(this.probeTimer);
+            this.probeTimer = null;
+        }
         this.isRunning = false;
         this.samples = [];
         this.motionScore = 0;
         this.available = false;
         this.lastEventTime = 0;
+        this.hasReceivedData = false;
+        this.probeTimedOut = false;
         this.onUpdate = null;
     }
 }
