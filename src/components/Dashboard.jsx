@@ -310,6 +310,10 @@ const Dashboard = () => {
     const statusLabel = isProtectionOn ? getRiskLabel(level) : 'Protection off';
     const motionSupported = MotionPipelineController.isSupported();
 
+    // Drives the wide-screen two-column layout: with no camera or microphone
+    // panel there is nothing to place beside the controls.
+    const showPanels = isProtectionOn && (cameraEnabled || micEnabled);
+
     return (
         <div className="page dashboard">
             <header className="dash-header">
@@ -334,6 +338,11 @@ const Dashboard = () => {
                     </button>
                 </div>
             )}
+
+            {/* On narrow screens the two columns collapse (via display:contents)
+                into the single flow the phone layout expects. */}
+            <div className={`dash-grid ${showPanels ? '' : 'dash-grid--single'}`}>
+                <div className="dash-col dash-col--main">
 
             {/* ── Status ─────────────────────────────────────────────── */}
             <section className={`status-card status-card--${level}`} aria-live="polite">
@@ -404,25 +413,6 @@ const Dashboard = () => {
                 )}
             </section>
 
-            {/* ── Sensor panels ──────────────────────────────────────── */}
-            {isProtectionOn && cameraEnabled && (
-                <GestureDetector
-                    onGestureUpdate={handleGestureUpdate}
-                    onStatusChange={handleGestureStatus}
-                />
-            )}
-
-            {isProtectionOn && micEnabled && (
-                <AudioVisualizer
-                    analyser={audio.analyser}
-                    stressScore={audio.stressScore}
-                    mfccData={audio.mfccData}
-                    isCalibrating={audio.isCalibrating}
-                    baseline={audio.baseline}
-                    showTechnical={showTechnical}
-                />
-            )}
-
             {/* ── Manual alert ───────────────────────────────────────── */}
             <section className="manual-card">
                 <button
@@ -452,6 +442,29 @@ const Dashboard = () => {
                     <p>Location: {location.error} An alert will still be prepared without it.</p>
                 )}
             </section>
+
+                </div>
+
+                <div className="dash-col dash-col--panels">
+
+            {/* ── Sensor panels ──────────────────────────────────────── */}
+            {isProtectionOn && cameraEnabled && (
+                <GestureDetector
+                    onGestureUpdate={handleGestureUpdate}
+                    onStatusChange={handleGestureStatus}
+                />
+            )}
+
+            {isProtectionOn && micEnabled && (
+                <AudioVisualizer
+                    analyser={audio.analyser}
+                    stressScore={audio.stressScore}
+                    mfccData={audio.mfccData}
+                    isCalibrating={audio.isCalibrating}
+                    baseline={audio.baseline}
+                    showTechnical={showTechnical}
+                />
+            )}
 
             <button
                 type="button"
@@ -501,6 +514,9 @@ const Dashboard = () => {
                     {audio.error && <p className="tech-error">Audio: {audio.error}</p>}
                 </section>
             )}
+
+                </div>
+            </div>
 
             {/* ── Countdown ──────────────────────────────────────────── */}
             {countdown !== null && (

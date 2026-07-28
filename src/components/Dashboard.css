@@ -1,6 +1,17 @@
 /* Dashboard — the screen someone looks at when they are worried.
    Big status, plain words, and an unmissable way to stop an alert. */
 
+/* ── Responsive shell ────────────────────────────────────────────────────
+   The layout adapts to the width of the window, not to a guess about the
+   device. Sniffing the user agent gets tablets, split-screen windows and
+   resized browsers wrong; a media query is simply correct in all of them.
+
+   Phone: one column, everything at a comfortable reading width.
+   Laptop: two columns, so the sensor panels sit beside the status and
+   controls instead of leaving the sides empty and pushing the camera
+   preview far below the fold.
+   ───────────────────────────────────────────────────────────────────────── */
+
 .dashboard {
   gap: var(--space-4);
 }
@@ -12,6 +23,103 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.dash-grid {
+  display: contents;
+}
+
+/* On narrow screens the column wrappers vanish from the box tree entirely,
+   so their children flow directly in the page's single column. `order`
+   restores the phone reading sequence the markup would otherwise lose. */
+.dash-col {
+  display: contents;
+}
+
+.dash-col--main>.status-card {
+  order: 1;
+}
+
+.dash-col--main>.control-card {
+  order: 2;
+}
+
+.dash-col--panels>.gesture-detector {
+  order: 3;
+}
+
+.dash-col--panels>.audio-panel {
+  order: 4;
+}
+
+.dash-col--main>.manual-card {
+  order: 5;
+}
+
+.dash-col--main>.assurance {
+  order: 6;
+}
+
+.dash-col--panels>.link-button--muted {
+  order: 7;
+}
+
+.dash-col--panels>.tech-panel {
+  order: 8;
+}
+
+@media (min-width: 60rem) {
+  .dashboard {
+    padding-inline: var(--space-5);
+  }
+
+  .dash-header {
+    max-width: 72rem;
+  }
+
+  .dash-grid {
+    display: grid;
+    width: 100%;
+    max-width: 72rem;
+    grid-template-columns: minmax(20rem, 24rem) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4);
+  }
+
+  .dash-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    min-width: 0;
+  }
+
+  /* Ordering is only needed while the columns are collapsed. */
+  .dash-col>* {
+    order: 0;
+    max-width: none;
+  }
+
+  /* The status and controls stay visible while you scroll the panels. */
+  .dash-col--main {
+    position: sticky;
+    top: var(--space-4);
+  }
+
+  .dash-col--panels>.link-button--muted {
+    align-self: flex-start;
+  }
+
+  /* With no sensor panels showing there is nothing to put beside the
+     controls, so fall back to a single centred column rather than leaving
+     a wide empty gutter. */
+  .dash-grid--single {
+    grid-template-columns: minmax(0, 34rem);
+    justify-content: center;
+  }
+
+  .dash-grid--single .dash-col--main {
+    position: static;
+  }
 }
 
 .dash-eyebrow {
