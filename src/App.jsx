@@ -34,6 +34,11 @@ function App() {
                 <Route path="/permissions" element={<PermissionScreen />} />
                 <Route path="/contacts" element={<ContactScreen />} />
                 <Route path="/dashboard" element={<Dashboard />} />
+
+                {/* Deep link: opens directly into the alert countdown, with no
+                    navigation at all. Used by the home-screen shortcut. */}
+                <Route path="/sos" element={<Dashboard autoAlert />} />
+
                 <Route path="/emergency" element={<EmergencyScreen />} />
 
                 <Route path="*" element={<Navigate to="/" replace />} />

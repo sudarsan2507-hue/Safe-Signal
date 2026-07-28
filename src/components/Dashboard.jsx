@@ -59,7 +59,13 @@ const MOTION_TEXT = {
 
 const IDLE_GESTURE = { score: 0, confidence: 0, ready: false };
 
-const Dashboard = () => {
+/**
+ * @param {{ autoAlert?: boolean }} props - autoAlert starts the countdown on
+ *   mount, for the /sos deep link and home-screen shortcut. Set as initial
+ *   state rather than from an effect so the countdown is on screen from the
+ *   very first paint.
+ */
+const Dashboard = ({ autoAlert = false }) => {
     const navigate = useNavigate();
 
     const [isProtectionOn, setIsProtectionOn] = useState(false);
@@ -68,7 +74,7 @@ const Dashboard = () => {
 
     const [risk, setRisk] = useState(IDLE_RISK);
 
-    const [countdown, setCountdown] = useState(null);
+    const [countdown, setCountdown] = useState(autoAlert ? COUNTDOWN_SECONDS : null);
     const [showTechnical, setShowTechnical] = useState(false);
     const [notice, setNotice] = useState(null);
 
