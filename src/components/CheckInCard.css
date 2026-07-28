@@ -1,0 +1,158 @@
+/* Check-in timer.
+   Reads as reassurance while counting, and becomes unmissable once the time is
+   up — but never alarming, because the most likely reason it is showing is that
+   someone simply forgot. */
+
+.checkin-card {
+  width: 100%;
+  max-width: 34rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  transition: border-color 0.3s ease, background-color 0.3s ease;
+}
+
+.checkin-card--counting {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.checkin-card--grace {
+  border-color: var(--risk-elevated);
+  background: var(--risk-elevated-soft);
+}
+
+.checkin-card--fired {
+  border-color: var(--risk-critical);
+  background: var(--risk-critical-soft);
+}
+
+.checkin-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.checkin-title {
+  font-size: 1.125rem;
+}
+
+.checkin-sub {
+  font-size: 0.9375rem;
+  color: var(--text-muted);
+}
+
+.checkin-countdown {
+  font-size: clamp(2.5rem, 10vw, 3.5rem);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.checkin-countdown--urgent {
+  color: var(--risk-elevated);
+}
+
+.checkin-note {
+  font-size: 0.9375rem;
+  font-style: italic;
+  color: var(--text-muted);
+  padding: var(--space-2);
+  background: var(--bg-sunken);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Duration picker ─────────────────────────────────────────────────── */
+.checkin-durations {
+  border: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.checkin-legend {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-2);
+}
+
+.duration-option {
+  flex: 1;
+  min-width: 5rem;
+  min-height: var(--tap-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--text);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.duration-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.duration-option.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.duration-option:has(input:focus-visible) {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Actions ─────────────────────────────────────────────────────────── */
+.checkin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The safe-and-well button is the largest target here — the common case is a
+   person who is fine and slightly flustered. */
+.btn-checkin {
+  flex: 2;
+  min-width: 10rem;
+  min-height: 3.5rem;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 1.0625rem;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.btn-checkin:hover {
+  background: var(--accent-hover);
+}
+
+.checkin-actions .btn-secondary {
+  flex: 1;
+  min-width: 7rem;
+}
+
+.checkin-card .btn-primary {
+  width: 100%;
+  min-height: 3.25rem;
+}
+
+.checkin-footnote {
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
