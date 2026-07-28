@@ -12,8 +12,11 @@ import { getMotionPipeline, MotionPipelineController } from '../utils/motionPipe
 import { createAlert } from '../utils/alerts';
 import { loadContacts } from '../utils/storage';
 import useWakeLock from '../hooks/useWakeLock';
+import useCheckIn from '../hooks/useCheckIn';
+import { describeCheckInReason } from '../utils/checkIn';
 import AudioVisualizer from './AudioVisualizer';
 import GestureDetector from './GestureDetector';
+import CheckInCard from './CheckInCard';
 import './Dashboard.css';
 
 /** How often risk is recomputed. */
@@ -245,6 +248,15 @@ const Dashboard = () => {
         navigate('/emergency');
     }, [navigate]);
 
+    // A missed check-in raises the alert directly, with no on-screen countdown.
+    // The grace period already gave the chance to cancel, and the premise is
+    // that the person may be unable to interact at all.
+    const checkIn = useCheckIn(
+        useCallback((record) => {
+            raiseAlert(describeCheckInReason(record));
+        }, [raiseAlert]),
+    );
+
     // ── Countdown ──────────────────────────────────────────────────────────
     // Driven by its own effect rather than from inside a setState updater,
     // which must stay pure and would otherwise fire twice under StrictMode.
@@ -422,6 +434,19 @@ const Dashboard = () => {
                     </p>
                 )}
             </section>
+
+            {/* ── Check-in timer ─────────────────────────────────────── */}
+            {/* Sits outside the protection toggle on purpose: it must work
+                when no sensor is running and the screen is off. */}
+            <CheckInCard
+                phase={checkIn.phase}
+                remainingMs={checkIn.remainingMs}
+                graceRemainingMs={checkIn.graceRemainingMs}
+                record={checkIn.record}
+                onStart={checkIn.start}
+                onExtend={checkIn.extend}
+                onCheckIn={checkIn.checkIn}
+            />
 
             {/* ── Manual alert ───────────────────────────────────────── */}
             <section className="manual-card">
