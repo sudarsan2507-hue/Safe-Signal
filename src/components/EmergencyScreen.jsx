@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getGoogleMapsLink, formatCoords, describeAccuracy } from '../utils/geo';
+import {
+    getGoogleMapsLink,
+    formatCoords,
+    describeAccuracy,
+    isAccuracyUsable,
+    explainPoorAccuracy,
+} from '../utils/geo';
 import { loadLastAlert } from '../utils/storage';
 import {
     markRecipientStatus,
@@ -90,7 +96,18 @@ const EmergencyScreen = () => {
                     {alert.location ? (
                         <>
                             <p className="info-value">{formatCoords(alert.location)}</p>
-                            <p className="info-sub">{describeAccuracy(alert.location.accuracy)}</p>
+                            <p
+                                className={`info-sub ${isAccuracyUsable(alert.location.accuracy) ? '' : 'info-sub--warn'}`}
+                            >
+                                {describeAccuracy(alert.location.accuracy)}
+                            </p>
+
+                            {/* A pin from an IP lookup looks exactly as confident as one
+                                from GPS, so the difference has to be said out loud. */}
+                            {!isAccuracyUsable(alert.location.accuracy) && (
+                                <p className="info-sub">{explainPoorAccuracy(alert.location.accuracy)}</p>
+                            )}
+
                             <a
                                 className="info-link"
                                 href={getGoogleMapsLink(alert.location.lat, alert.location.lng)}

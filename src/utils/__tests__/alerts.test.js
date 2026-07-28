@@ -30,6 +30,38 @@ describe('buildAlertMessage', () => {
         expect(message).toContain('Held the hand signal');
     });
 
+    it('formats accuracy in kilometres once it exceeds a kilometre', () => {
+        const message = buildAlertMessage({
+            location: { lat: 10.9894, lng: 76.9598, accuracy: 500000 },
+            locationError: null,
+            reason: null,
+        });
+        expect(message).toContain('500 km');
+        expect(message).not.toContain('500000 m');
+    });
+
+    it('warns the recipient when the fix is too coarse to trust', () => {
+        // An IP-derived pin looks as confident as a GPS one. Without this the
+        // recipient could search a city centre hundreds of km from the person.
+        const message = buildAlertMessage({
+            location: { lat: 10.9894, lng: 76.9598, accuracy: 500000 },
+            locationError: null,
+            reason: null,
+        });
+        expect(message).toMatch(/WARNING/);
+        expect(message).toMatch(/do not rely on the pin/i);
+    });
+
+    it('does not warn when the fix is precise', () => {
+        const message = buildAlertMessage({
+            location: { lat: 10.9894, lng: 76.9598, accuracy: 12 },
+            locationError: null,
+            reason: null,
+        });
+        expect(message).toContain('accurate to about 12 m');
+        expect(message).not.toMatch(/WARNING/);
+    });
+
     it('says location is unavailable rather than inventing coordinates', () => {
         // The old code silently substituted a hardcoded New York position,
         // which would send help to the wrong place.

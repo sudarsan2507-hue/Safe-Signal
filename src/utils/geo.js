@@ -122,12 +122,52 @@ export const formatCoords = (coords) => {
 };
 
 /**
+ * Beyond this radius a fix is too coarse to find someone with, and saying so
+ * matters more than showing a number. A device without GPS commonly falls back
+ * to IP-based lookup, which returns a plausible-looking city-centre pin with an
+ * accuracy radius of tens or hundreds of kilometres.
+ */
+export const UNUSABLE_ACCURACY_M = 2000;
+
+/**
+ * Format a distance in units a person can read at a glance.
+ * @param {number} meters
+ * @returns {string}
+ */
+export const formatDistance = (meters) => {
+    if (meters == null || !Number.isFinite(meters)) return '';
+    if (meters < 1000) return `${Math.round(meters)} m`;
+    const km = meters / 1000;
+    return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
+};
+
+/**
+ * @param {number} accuracyMeters
+ * @returns {boolean} whether the fix is precise enough to actually locate someone
+ */
+export const isAccuracyUsable = (accuracyMeters) =>
+    accuracyMeters != null && Number.isFinite(accuracyMeters) && accuracyMeters <= UNUSABLE_ACCURACY_M;
+
+/**
  * @param {number} accuracyMeters
  * @returns {string}
  */
 export const describeAccuracy = (accuracyMeters) => {
-    if (accuracyMeters == null) return '';
-    if (accuracyMeters <= 20) return 'Precise to about 20 m';
-    if (accuracyMeters <= 100) return `Precise to about ${Math.round(accuracyMeters)} m`;
-    return `Approximate — within about ${Math.round(accuracyMeters)} m`;
+    if (accuracyMeters == null || !Number.isFinite(accuracyMeters)) return '';
+    if (accuracyMeters <= 50) return `Precise — within about ${formatDistance(accuracyMeters)}`;
+    if (accuracyMeters <= 500) return `Good — within about ${formatDistance(accuracyMeters)}`;
+    if (accuracyMeters <= UNUSABLE_ACCURACY_M) {
+        return `Rough — within about ${formatDistance(accuracyMeters)}`;
+    }
+    return `Too rough to find you — could be anywhere within ${formatDistance(accuracyMeters)}`;
+};
+
+/**
+ * Why a fix might be this poor, in terms the user can act on.
+ * @param {number} accuracyMeters
+ * @returns {string|null}
+ */
+export const explainPoorAccuracy = (accuracyMeters) => {
+    if (isAccuracyUsable(accuracyMeters)) return null;
+    return 'This device has no GPS, so your position was estimated from your internet connection. On a phone outdoors it is usually accurate to a few metres.';
 };

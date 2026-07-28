@@ -11,7 +11,7 @@
  * Nothing in this app may claim a contact was reached when it does not know.
  */
 
-import { getGoogleMapsLink } from './geo.js';
+import { getGoogleMapsLink, formatDistance, isAccuracyUsable } from './geo.js';
 import { saveLastAlert } from './storage.js';
 
 /**
@@ -32,8 +32,18 @@ export const buildAlertMessage = ({ location, locationError, reason, name }) => 
 
     if (location) {
         lines.push(`Location: ${getGoogleMapsLink(location.lat, location.lng)}`);
+
         if (location.accuracy != null) {
-            lines.push(`(accurate to about ${Math.round(location.accuracy)} m)`);
+            if (isAccuracyUsable(location.accuracy)) {
+                lines.push(`(accurate to about ${formatDistance(location.accuracy)})`);
+            } else {
+                // A recipient who trusts a city-centre pin from an IP lookup
+                // could search the wrong place entirely, so the caveat travels
+                // with the link rather than staying in the sender's UI.
+                lines.push(
+                    `(WARNING: this position is only a rough estimate — could be anywhere within ${formatDistance(location.accuracy)}. Do not rely on the pin.)`,
+                );
+            }
         }
     } else {
         lines.push(`Location: unavailable — ${locationError ?? 'could not be determined'}.`);

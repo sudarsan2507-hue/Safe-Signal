@@ -134,6 +134,13 @@
   word-break: break-word;
 }
 
+/* Poor accuracy is a caution, not a failure — amber rather than red, but
+   deliberately not the same quiet grey as ordinary supporting text. */
+.info-sub--warn {
+  color: var(--risk-elevated);
+  font-weight: 600;
+}
+
 .info-card--urgent {
   border-color: var(--risk-critical);
   background: var(--risk-critical-soft);
