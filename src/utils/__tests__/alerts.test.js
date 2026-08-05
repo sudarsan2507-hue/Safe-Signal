@@ -4,6 +4,7 @@ import {
     createAlert,
     markRecipientStatus,
     buildSmsLink,
+    buildTelLink,
     describeStatus,
     summariseAlert,
 } from '../alerts.js';
@@ -102,6 +103,12 @@ describe('markRecipientStatus', () => {
         const updated = markRecipientStatus(alert, 'a', 'opened');
         expect(updated.recipients.find((r) => r.id === 'a').status).toBe('opened');
         expect(updated.recipients.find((r) => r.id === 'b').status).toBe('ready');
+    });
+});
+
+describe('buildTelLink', () => {
+    it('strips formatting from the number', () => {
+        expect(buildTelLink('+91 (987) 654-3210')).toBe('tel:+919876543210');
     });
 });
 

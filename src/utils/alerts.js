@@ -129,6 +129,18 @@ export const buildSmsLink = (phone, message) => {
 };
 
 /**
+ * Build a `tel:` URL.
+ *
+ * Rendered as a link rather than triggered from JavaScript: browsers require a
+ * user gesture to open the dialer, and a page that tried to place a call by
+ * itself would be blocked.
+ *
+ * @param {string} phone
+ * @returns {string}
+ */
+export const buildTelLink = (phone) => `tel:${String(phone).replace(/[^\d+]/g, '')}`;
+
+/**
  * Open the device SMS composer for one contact.
  * Resolves to the status actually achieved — never better than "opened".
  *
