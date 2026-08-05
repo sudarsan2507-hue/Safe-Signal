@@ -24,6 +24,31 @@ const ASSET_CACHE = `safesignal-assets-${VERSION}`;
 
 const SHELL_URLS = ['/', '/index.html', '/manifest.webmanifest'];
 
+/**
+ * Cap on cached assets.
+ *
+ * Build output is content-hashed, so every deploy introduces new filenames and
+ * the old ones are never requested again. Nothing serves stale code — but with
+ * a fixed cache name the superseded files are never evicted either, so storage
+ * grows without bound across deploys. Trimming to the most recent entries keeps
+ * the current build (a handful of files) plus a little history for rollbacks.
+ */
+const MAX_ASSET_ENTRIES = 60;
+
+/**
+ * Drop the oldest entries once a cache exceeds its cap.
+ * cache.keys() resolves in insertion order, so the front is the oldest.
+ *
+ * @param {string} cacheName
+ * @param {number} maxEntries
+ */
+const trimCache = async (cacheName, maxEntries) => {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length <= maxEntries) return;
+    await Promise.all(keys.slice(0, keys.length - maxEntries).map((key) => cache.delete(key)));
+};
+
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches
@@ -92,7 +117,10 @@ self.addEventListener('fetch', (event) => {
                     fetch(request).then((response) => {
                         if (response.ok) {
                             const copy = response.clone();
-                            caches.open(ASSET_CACHE).then((cache) => cache.put(request, copy));
+                            caches
+                                .open(ASSET_CACHE)
+                                .then((cache) => cache.put(request, copy))
+                                .then(() => trimCache(ASSET_CACHE, MAX_ASSET_ENTRIES));
                         }
                         return response;
                     }),
