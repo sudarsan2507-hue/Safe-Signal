@@ -17,6 +17,7 @@ import {
 import {
     markRecipientStatus,
     openSmsComposer,
+    buildTelLink,
     shareAlert,
     copyAlert,
     canShare,
@@ -156,13 +157,20 @@ const EmergencyScreen = () => {
                                         <span className="recipient-phone">{recipient.phone}</span>
                                         <span className="recipient-status">{describeStatus(recipient.status)}</span>
                                     </div>
-                                    <button
-                                        type="button"
-                                        className="btn-send"
-                                        onClick={() => handleSms(recipient)}
-                                    >
-                                        {recipient.status === 'ready' ? 'Send message' : 'Send again'}
-                                    </button>
+                                    <div className="recipient-actions">
+                                        {/* Calling is first: a ringing phone gets attention in
+                                            seconds, where a text may sit unread. */}
+                                        <a className="btn-call" href={buildTelLink(recipient.phone)}>
+                                            Call
+                                        </a>
+                                        <button
+                                            type="button"
+                                            className="btn-send"
+                                            onClick={() => handleSms(recipient)}
+                                        >
+                                            {recipient.status === 'ready' ? 'Message' : 'Again'}
+                                        </button>
+                                    </div>
                                 </li>
                             ))}
                         </ul>
