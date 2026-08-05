@@ -1,10 +1,5 @@
 import { useState } from 'react';
-import {
-    DURATION_PRESETS,
-    formatDuration,
-    formatRemaining,
-    GRACE_MS,
-} from '../utils/checkIn';
+import { DURATION_PRESETS, formatRemaining, GRACE_MS } from '../utils/checkIn';
 import './CheckInCard.css';
 
 /**
@@ -21,7 +16,6 @@ import './CheckInCard.css';
  */
 const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, onExtend, onCheckIn }) => {
     const [note, setNote] = useState('');
-    const [selected, setSelected] = useState(DURATION_PRESETS[1]);
 
     if (phase === 'counting' || phase === 'grace' || phase === 'fired') {
         return (
@@ -87,53 +81,50 @@ const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, on
             <header className="checkin-header">
                 <h2 id="checkin-heading" className="checkin-title">Check-in timer</h2>
                 <p className="checkin-sub">
-                    For when you can&apos;t speak or move. Set a time — if you don&apos;t
+                    For when you can&apos;t speak or move. Tap a time — if you don&apos;t
                     check in, SafeSignal alerts your contacts without you doing anything.
                 </p>
             </header>
 
-            <fieldset className="checkin-durations">
-                <legend className="checkin-legend">How long?</legend>
+            {/* One tap starts the timer. Picking a duration and then confirming
+                is two decisions, and someone reaching for this is usually
+                already uneasy and in a hurry. */}
+            <div className="checkin-durations" role="group" aria-label="Start a check-in">
                 {DURATION_PRESETS.map((minutes) => (
-                    <label
+                    <button
                         key={minutes}
-                        className={`duration-option ${selected === minutes ? 'is-selected' : ''}`}
+                        type="button"
+                        className="duration-start"
+                        onClick={() => onStart(minutes * 60 * 1000, note)}
                     >
-                        <input
-                            type="radio"
-                            name="checkin-duration"
-                            value={minutes}
-                            checked={selected === minutes}
-                            onChange={() => setSelected(minutes)}
-                        />
-                        <span>{formatDuration(minutes)}</span>
-                    </label>
+                        <span className="duration-value">{minutes}</span>
+                        <span className="duration-unit">min</span>
+                    </button>
                 ))}
-            </fieldset>
-
-            <div className="field">
-                <label htmlFor="checkin-note">What are you doing? (optional)</label>
-                <input
-                    id="checkin-note"
-                    type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="Walking home from the station"
-                    maxLength={200}
-                />
             </div>
 
-            <button
-                type="button"
-                className="btn-primary"
-                onClick={() => onStart(selected * 60 * 1000, note)}
-            >
-                Start check-in
-            </button>
+            <details className="checkin-note-toggle">
+                <summary>Add a note (optional)</summary>
+                <div className="field">
+                    <label htmlFor="checkin-note">What are you doing?</label>
+                    <input
+                        id="checkin-note"
+                        type="text"
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        placeholder="Walking home from the station"
+                        maxLength={200}
+                    />
+                    <p className="checkin-footnote">
+                        Included in the alert so your contact knows where to look.
+                    </p>
+                </div>
+            </details>
 
             <p className="checkin-footnote">
-                You get {Math.round(GRACE_MS / 1000)} seconds to cancel after the time is up.
-                This keeps running even if you close the app.
+                You get {Math.round(GRACE_MS / 1000)} seconds to cancel after the time is up,
+                and you can add more time at any point. This keeps running even if you
+                close the app.
             </p>
         </section>
     );
