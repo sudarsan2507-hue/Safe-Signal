@@ -26,6 +26,20 @@ precise:
 **In a real emergency, call your local emergency number.** SafeSignal is a supplement, not a
 replacement.
 
+### The gap this cannot close
+
+A web page has no way to send an SMS or place a call unattended. `sms:` opens the
+composer with the text pre-filled and `tel:` opens the dialer, but a human still has to
+press send. There is no browser API for silent delivery, by design.
+
+That means **if you have been taken, you are not there to press send.** It is the most
+serious limitation in the app, it cannot be fixed in the browser, and the UI states it
+outright rather than letting it be discovered at the worst moment.
+
+Closing it needs a server that holds the check-in deadline and dispatches through an SMS
+provider when it expires — so the alert leaves without depending on the person being able
+to act. That is the single change that would most improve this project.
+
 ## Getting to help quickly
 
 An emergency tool that takes four taps to reach is not an emergency tool.
@@ -47,6 +61,23 @@ There is no sign-up, no account and no password — there is no server to hold o
 background, cannot watch sensors while closed, cannot listen for a hardware
 button, and cannot wake itself when a check-in expires — a missed deadline is
 raised when you next open it. Those need a native app or a push backend.
+
+## Why an alert was sent
+
+Every alert carries an incident record: what each sensor read, the peak risk,
+and a timeline of the moments that mattered — threshold crossed, countdown
+started, alert prepared. The emergency screen shows it, and a one-line summary
+travels in the message so the recipient knows what was actually measured rather
+than trusting a bare alert.
+
+**It contains numbers and timestamps only. No audio, video or images are ever
+recorded**, which keeps the privacy promise on every other screen literally true.
+
+This is deliberate rather than a limitation. A log states in one line what a
+viewer would have to infer from thirty seconds of dark, shaky footage, and it
+makes a false positive diagnosable instead of mysterious. Recording would also
+be of limited use here: with no server, a clip could only be written to the
+device — the same device an attacker may take.
 
 ## Check-in timer
 
