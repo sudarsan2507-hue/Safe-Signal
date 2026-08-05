@@ -11,6 +11,7 @@ import { getAudioPipeline } from '../utils/audio/audioPipeline';
 import { getMotionPipeline, MotionPipelineController } from '../utils/motionPipeline';
 import { createAlert } from '../utils/alerts';
 import { loadContacts } from '../utils/storage';
+import { getIncidentLog, EVENT } from '../utils/incidentLog';
 import useWakeLock from '../hooks/useWakeLock';
 import useCheckIn from '../hooks/useCheckIn';
 import { describeCheckInReason } from '../utils/checkIn';
@@ -206,6 +207,9 @@ const Dashboard = ({ autoAlert = false }) => {
             return undefined;
         }
 
+        const log = getIncidentLog();
+        let wasSustaining = false;
+
         const tick = () => {
             const readings = {
                 gesture: gestureRef.current,
@@ -215,8 +219,24 @@ const Dashboard = ({ autoAlert = false }) => {
             const evaluation = trackerRef.current.update(readings, availabilityRef.current);
             setRisk(evaluation);
 
+            log.record(EVENT.READING, {
+                risk: evaluation.score,
+                readings,
+                active: evaluation.activeSensors,
+            });
+
+            // Note the edges, not every tick, so the log reads as a story.
+            const isSustaining = evaluation.sustainedMs > 0;
+            if (isSustaining && !wasSustaining) {
+                log.record(EVENT.SUSTAIN_STARTED, { risk: evaluation.score });
+            } else if (!isSustaining && wasSustaining) {
+                log.record(EVENT.SUSTAIN_RESET, {});
+            }
+            wasSustaining = isSustaining;
+
             if (evaluation.shouldEscalate && !escalatedRef.current) {
                 escalatedRef.current = true;
+                log.record(EVENT.COUNTDOWN_STARTED, { reason: evaluation.escalationReason });
                 setCountdown(COUNTDOWN_SECONDS);
             }
         };
@@ -244,11 +264,17 @@ const Dashboard = ({ autoAlert = false }) => {
             }
         }
 
+        const log = getIncidentLog();
+        log.record(EVENT.ALERT_RAISED, { reason });
+
         createAlert({
             contacts: loadContacts(),
             location: coords,
             locationError,
             reason,
+            // Numbers and timestamps only — this is what makes the alert
+            // explainable without recording anything.
+            incident: log.snapshot(),
         });
 
         navigate('/emergency');
@@ -282,6 +308,7 @@ const Dashboard = ({ autoAlert = false }) => {
         setCountdown(null);
         escalatedRef.current = false;
         trackerRef.current.reset();
+        getIncidentLog().record(EVENT.COUNTDOWN_CANCELLED);
         setNotice({ tone: 'calm', text: "Alert stopped. You're still protected." });
     }, []);
 
@@ -291,6 +318,7 @@ const Dashboard = ({ autoAlert = false }) => {
      */
     const toggleProtection = useCallback(() => {
         setIsProtectionOn((wasOn) => !wasOn);
+        getIncidentLog().record(isProtectionOn ? EVENT.PROTECTION_OFF : EVENT.PROTECTION_ON);
 
         if (isProtectionOn) {
             gestureRef.current = 0;
@@ -308,6 +336,7 @@ const Dashboard = ({ autoAlert = false }) => {
 
     const toggleMic = useCallback(() => {
         setMicEnabled((wasOn) => !wasOn);
+        getIncidentLog().record(micEnabled ? EVENT.SENSOR_OFF : EVENT.SENSOR_ON, { sensor: 'stress' });
         if (micEnabled) {
             stressRef.current = 0;
             setAudio(IDLE_AUDIO);
@@ -316,6 +345,7 @@ const Dashboard = ({ autoAlert = false }) => {
 
     const toggleCamera = useCallback(() => {
         setCameraEnabled((wasOn) => !wasOn);
+        getIncidentLog().record(cameraEnabled ? EVENT.SENSOR_OFF : EVENT.SENSOR_ON, { sensor: 'gesture' });
         if (cameraEnabled) {
             gestureRef.current = 0;
             setGesture(IDLE_GESTURE);
@@ -459,7 +489,10 @@ const Dashboard = ({ autoAlert = false }) => {
                 <button
                     type="button"
                     className="btn-alert"
-                    onClick={() => setCountdown(COUNTDOWN_SECONDS)}
+                    onClick={() => {
+                        getIncidentLog().record(EVENT.MANUAL_ALERT);
+                        setCountdown(COUNTDOWN_SECONDS);
+                    }}
                 >
                     Get help now
                 </button>
