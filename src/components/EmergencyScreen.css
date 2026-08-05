@@ -134,6 +134,54 @@
   word-break: break-word;
 }
 
+/* ── Incident record ─────────────────────────────────────────────────── */
+.incident-peaks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.incident-peaks div {
+  display: flex;
+  flex-direction: column;
+}
+
+.incident-peaks dt {
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+
+.incident-peaks dd {
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.incident-timeline {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.incident-timeline li {
+  display: flex;
+  gap: var(--space-2);
+  font-size: 0.875rem;
+}
+
+.incident-time {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.incident-what {
+  color: var(--text);
+}
+
 /* Poor accuracy is a caution, not a failure — amber rather than red, but
    deliberately not the same quiet grey as ordinary supporting text. */
 .info-sub--warn {

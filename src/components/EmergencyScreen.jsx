@@ -9,6 +9,12 @@ import {
 } from '../utils/geo';
 import { loadLastAlert } from '../utils/storage';
 import {
+    summariseSnapshot,
+    describeMoment,
+    formatRisk,
+    formatTime,
+} from '../utils/incidentLog';
+import {
     markRecipientStatus,
     openSmsComposer,
     shareAlert,
@@ -174,6 +180,9 @@ const EmergencyScreen = () => {
                     </div>
                 </section>
 
+                {/* ── Why this happened ─────────────────────────────── */}
+                {alert.incident?.length > 0 && <IncidentPanel entries={alert.incident} />}
+
                 {/* ── Message preview ────────────────────────────────── */}
                 <section className="info-card" aria-labelledby="message-heading">
                     <h2 id="message-heading" className="info-heading">What they will read</h2>
@@ -207,6 +216,63 @@ const EmergencyScreen = () => {
             )}
         </div>
     );
+};
+
+/**
+ * Explains what the sensors measured and what happened when.
+ *
+ * This is the app's answer to "why was this sent?" — deliberately a record of
+ * readings rather than a recording. It also makes a false positive diagnosable
+ * instead of mysterious.
+ */
+const IncidentPanel = ({ entries }) => {
+    const summary = summariseSnapshot(entries);
+
+    return (
+        <section className="info-card" aria-labelledby="incident-heading">
+            <h2 id="incident-heading" className="info-heading">Why this was sent</h2>
+
+            {summary.peakReadings && (
+                <dl className="incident-peaks">
+                    {Object.entries(summary.peakReadings).map(([key, value]) => (
+                        <div key={key}>
+                            <dt>{SENSOR_NAMES[key] ?? key}</dt>
+                            <dd>
+                                {key === 'gesture'
+                                    ? value >= 1 ? 'Held' : 'Not held'
+                                    : `${Math.round(value * 100)}%`}
+                            </dd>
+                        </div>
+                    ))}
+                    <div>
+                        <dt>Highest risk</dt>
+                        <dd>{formatRisk(summary.peakRisk)}</dd>
+                    </div>
+                </dl>
+            )}
+
+            {summary.moments.length > 0 && (
+                <ol className="incident-timeline">
+                    {summary.moments.map((moment, index) => (
+                        <li key={`${moment.t}-${index}`}>
+                            <span className="incident-time">{formatTime(moment.t)}</span>
+                            <span className="incident-what">{describeMoment(moment)}</span>
+                        </li>
+                    ))}
+                </ol>
+            )}
+
+            <p className="info-sub">
+                Sensor readings and times only. No audio, video or images were recorded.
+            </p>
+        </section>
+    );
+};
+
+const SENSOR_NAMES = {
+    gesture: 'Hand signal',
+    stress: 'Voice tension',
+    motion: 'Movement',
 };
 
 export default EmergencyScreen;
