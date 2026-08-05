@@ -13,6 +13,7 @@
 
 import { getGoogleMapsLink, formatDistance, isAccuracyUsable } from './geo.js';
 import { saveLastAlert } from './storage.js';
+import { summariseTrigger } from './incidentLog.js';
 
 /**
  * @typedef {'ready'|'opened'|'copied'|'shared'|'failed'} DeliveryStatus
@@ -21,14 +22,18 @@ import { saveLastAlert } from './storage.js';
 /**
  * Compose the message a contact will receive.
  *
- * @param {{ location: Object|null, locationError: string|null, reason: string|null, name?: string }} params
+ * @param {{ location: Object|null, locationError: string|null, reason: string|null, name?: string, detected?: string|null }} params
  * @returns {string}
  */
-export const buildAlertMessage = ({ location, locationError, reason, name }) => {
+export const buildAlertMessage = ({ location, locationError, reason, name, detected }) => {
     const who = name?.trim() ? name.trim() : 'Someone using SafeSignal';
     const lines = [`${who} may need help.`];
 
     if (reason) lines.push(`Reason: ${reason}.`);
+
+    // What the sensors actually measured, so the recipient can judge how much
+    // weight to give this rather than trusting a bare "alert" with no basis.
+    if (detected) lines.push(detected);
 
     if (location) {
         lines.push(`Location: ${getGoogleMapsLink(location.lat, location.lng)}`);
@@ -58,11 +63,12 @@ export const buildAlertMessage = ({ location, locationError, reason, name }) => 
 /**
  * Build an alert record. Every contact starts as "ready" — prepared, not sent.
  *
- * @param {{ contacts: Array, location: Object|null, locationError: string|null, reason: string|null, userName?: string }} params
+ * @param {{ contacts: Array, location: Object|null, locationError: string|null, reason: string|null, userName?: string, incident?: Array }} params
  * @returns {Object}
  */
-export const createAlert = ({ contacts, location, locationError, reason, userName }) => {
-    const message = buildAlertMessage({ location, locationError, reason, name: userName });
+export const createAlert = ({ contacts, location, locationError, reason, userName, incident }) => {
+    const detected = incident?.length ? summariseTrigger(incident, reason) : null;
+    const message = buildAlertMessage({ location, locationError, reason, name: userName, detected });
 
     const alert = {
         id: `alert-${Date.now()}`,
@@ -71,6 +77,8 @@ export const createAlert = ({ contacts, location, locationError, reason, userNam
         location: location ?? null,
         locationError: locationError ?? null,
         message,
+        // Sensor readings and timestamps only — never audio, video or frames.
+        incident: incident ?? [],
         recipients: (contacts ?? []).map((contact) => ({
             id: contact.id,
             name: contact.name,
