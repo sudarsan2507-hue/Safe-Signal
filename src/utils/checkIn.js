@@ -28,8 +28,14 @@ export const CHECK_IN_KEY = 'safesignal.checkIn';
  */
 export const GRACE_MS = 60_000;
 
-/** Offered durations, in minutes. */
-export const DURATION_PRESETS = [15, 30, 60, 120];
+/**
+ * Offered durations, in minutes.
+ *
+ * Short by design. Someone setting this is often already uneasy and in a
+ * hurry, and a short timer that gets extended is far safer than a long one
+ * that leaves them unwatched. "+15 min" covers the case where it was too short.
+ */
+export const DURATION_PRESETS = [5, 10, 15];
 
 /** Longest timer we will accept, to catch a mis-typed custom value. */
 export const MAX_DURATION_MS = 12 * 60 * 60 * 1000;
