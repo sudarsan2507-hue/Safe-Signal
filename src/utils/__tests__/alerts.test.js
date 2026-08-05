@@ -153,8 +153,15 @@ describe('summariseAlert', () => {
     it('states plainly that nothing has been sent yet', () => {
         const alert = createAlert({ contacts, location: null, locationError: null, reason: null });
         const summary = summariseAlert(alert);
-        expect(summary.detail).toMatch(/nothing has been sent/i);
+        expect(summary.headline).toMatch(/nothing has been sent/i);
         expect(summary.allHandled).toBe(false);
+    });
+
+    it('says outright that it cannot send on its own', () => {
+        // The gap that matters: if someone has been taken, they are not there
+        // to press send. The UI must never let that be discovered too late.
+        const alert = createAlert({ contacts, location: null, locationError: null, reason: null });
+        expect(summariseAlert(alert).detail).toMatch(/cannot send this on its own/i);
     });
 
     it('reports partial progress', () => {

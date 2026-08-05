@@ -133,7 +133,8 @@ export const buildSmsLink = (phone, message) => {
  *
  * Rendered as a link rather than triggered from JavaScript: browsers require a
  * user gesture to open the dialer, and a page that tried to place a call by
- * itself would be blocked.
+ * itself would be blocked. See the note on openSmsComposer for why nothing
+ * here can happen unattended.
  *
  * @param {string} phone
  * @returns {string}
@@ -143,6 +144,23 @@ export const buildTelLink = (phone) => `tel:${String(phone).replace(/[^\d+]/g, '
 /**
  * Open the device SMS composer for one contact.
  * Resolves to the status actually achieved — never better than "opened".
+ *
+ * @param {Object} contact
+ * @param {string} message
+ * @returns {DeliveryStatus}
+ */
+/**
+ * Note on why this cannot happen by itself:
+ *
+ * A web page has no way to send an SMS or place a call unattended. `sms:` only
+ * opens the composer with the text pre-filled — the send button still has to be
+ * pressed — and `tel:` only opens the dialer. There is no browser API for
+ * silent delivery, by design, and no amount of client-side code changes that.
+ *
+ * That is a real gap: if someone has been taken, they are not there to press
+ * send. Closing it needs a server that holds the deadline and dispatches
+ * through an SMS provider, which is the one thing this app deliberately does
+ * not have. The UI therefore never implies an alert went out on its own.
  *
  * @param {Object} contact
  * @param {string} message
@@ -240,8 +258,9 @@ export const summariseAlert = (alert) => {
 
     if (handled.length === 0) {
         return {
-            headline: 'Your alert is ready',
-            detail: 'Tap a contact below to open a pre-written message. Nothing has been sent yet.',
+            headline: 'Your alert is ready — nothing has been sent',
+            detail:
+                'SafeSignal cannot send this on its own. Call or message a contact below, or ask someone nearby to do it for you.',
             allHandled: false,
         };
     }
