@@ -6,6 +6,7 @@ import {
     MAX_DURATION_MINUTES,
     GRACE_MS,
 } from '../utils/checkIn';
+import { describeRemoteState } from '../utils/remoteCheckIn';
 import './CheckInCard.css';
 
 /**
@@ -20,7 +21,17 @@ import './CheckInCard.css';
  *   phase, remainingMs, graceRemainingMs, record
  *   onStart(durationMs, note), onExtend(extraMs), onCheckIn()
  */
-const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, onExtend, onCheckIn }) => {
+const CheckInCard = ({
+    phase,
+    remainingMs,
+    graceRemainingMs,
+    record,
+    remoteState = 'off',
+    remoteError = null,
+    onStart,
+    onExtend,
+    onCheckIn,
+}) => {
     const [note, setNote] = useState('');
     const [showCustom, setShowCustom] = useState(false);
     const [customMinutes, setCustomMinutes] = useState('');
@@ -106,6 +117,14 @@ const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, on
                 )}
 
                 {record?.note && <p className="checkin-note">&ldquo;{record.note}&rdquo;</p>}
+
+                {/* What will actually happen, stated rather than assumed. */}
+                <p className={`checkin-delivery checkin-delivery--${remoteState}`}>
+                    {remoteState === 'pending'
+                        ? 'Registering with the server…'
+                        : describeRemoteState(remoteState)}
+                </p>
+                {remoteError && <p className="field-error">{remoteError}</p>}
 
                 <div className="checkin-actions">
                     <button type="button" className="btn-checkin" onClick={onCheckIn}>
@@ -225,6 +244,10 @@ const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, on
                 You get {Math.round(GRACE_MS / 1000)} seconds to cancel after the time is up,
                 and you can add more time at any point. This keeps running even if you
                 close the app.
+            </p>
+
+            <p className={`checkin-delivery checkin-delivery--${remoteState}`}>
+                {describeRemoteState(remoteState === 'pending' ? 'on' : remoteState)}
             </p>
         </section>
     );

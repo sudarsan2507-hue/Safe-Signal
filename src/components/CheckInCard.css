@@ -208,3 +208,26 @@
   font-size: 0.8125rem;
   color: var(--text-faint);
 }
+
+/* What will actually happen when the timer runs out. Never decorative — the
+   difference between "your contacts get called" and "you must send it
+   yourself" is the most consequential thing on this card. */
+.checkin-delivery {
+  font-size: 0.875rem;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+}
+
+.checkin-delivery--on {
+  background: var(--risk-safe-soft);
+  color: var(--risk-safe);
+  font-weight: 600;
+}
+
+.checkin-delivery--failed {
+  background: var(--risk-elevated-soft);
+  color: var(--risk-elevated);
+  font-weight: 600;
+}
