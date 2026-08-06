@@ -7,6 +7,13 @@ import {
     markCheckInFired,
     evaluateCheckIn,
 } from '../utils/checkIn.js';
+import {
+    isRemoteEnabled,
+    registerRemoteCheckIn,
+    cancelRemoteCheckIn,
+    clearRemoteHandle,
+} from '../utils/remoteCheckIn.js';
+import { loadContacts } from '../utils/storage.js';
 
 /**
  * Drive a check-in timer.
@@ -19,12 +26,22 @@ import {
  * @param {(record: Object) => void} onExpire - called once when the grace period runs out
  * @returns {Object}
  */
-export const useCheckIn = (onExpire) => {
+export const useCheckIn = (onExpire, location = null) => {
     const [record, setRecord] = useState(loadCheckIn);
     const [now, setNow] = useState(() => Date.now());
 
+    // 'off'  — no backend in this build; the alert must be sent by hand
+    // 'pending' / 'on' / 'failed' — what the server actually agreed to do
+    const [remoteState, setRemoteState] = useState(() => (isRemoteEnabled() ? 'off' : 'off'));
+    const [remoteError, setRemoteError] = useState(null);
+
     const onExpireRef = useRef(onExpire);
     const firingRef = useRef(false);
+    const locationRef = useRef(location);
+
+    useEffect(() => {
+        locationRef.current = location;
+    }, [location]);
 
     useEffect(() => {
         onExpireRef.current = onExpire;
@@ -61,11 +78,28 @@ export const useCheckIn = (onExpire) => {
 
     const start = useCallback((durationMs, note) => {
         const created = startCheckIn(durationMs, note);
-        if (created) {
-            firingRef.current = false;
-            setNow(Date.now());
-            setRecord(created);
+        if (!created) return null;
+
+        firingRef.current = false;
+        setNow(Date.now());
+        setRecord(created);
+
+        // The local timer is authoritative and already running. Registering
+        // with the server is an additional guarantee, so its failure must never
+        // block the check-in — only change what the UI promises.
+        if (isRemoteEnabled()) {
+            setRemoteState('pending');
+            registerRemoteCheckIn({
+                durationMs,
+                note,
+                contacts: loadContacts(),
+                location: locationRef.current,
+            }).then((result) => {
+                setRemoteState(result.ok ? 'on' : 'failed');
+                setRemoteError(result.ok ? null : result.error);
+            });
         }
+
         return created;
     }, []);
 
@@ -83,6 +117,19 @@ export const useCheckIn = (onExpire) => {
         firingRef.current = false;
         setRecord(null);
         setNow(Date.now());
+
+        if (isRemoteEnabled()) {
+            cancelRemoteCheckIn().then((result) => {
+                // A cancel that did not reach the server is worth saying out
+                // loud — the contacts may still be called.
+                setRemoteState(result.ok ? 'off' : 'failed');
+                setRemoteError(result.ok ? null : 'Could not tell the server you are safe.');
+            });
+        } else {
+            clearRemoteHandle();
+            setRemoteState('off');
+            setRemoteError(null);
+        }
     }, []);
 
     return {
@@ -91,6 +138,8 @@ export const useCheckIn = (onExpire) => {
         remainingMs: state.remainingMs,
         graceRemainingMs: state.graceRemainingMs,
         overdueMs: state.overdueMs,
+        remoteState,
+        remoteError,
         start,
         extend,
         checkIn,

@@ -287,6 +287,7 @@ const Dashboard = ({ autoAlert = false }) => {
         useCallback((record) => {
             raiseAlert(describeCheckInReason(record));
         }, [raiseAlert]),
+        location.coords,
     );
 
     // ── Countdown ──────────────────────────────────────────────────────────
@@ -479,6 +480,8 @@ const Dashboard = ({ autoAlert = false }) => {
                 remainingMs={checkIn.remainingMs}
                 graceRemainingMs={checkIn.graceRemainingMs}
                 record={checkIn.record}
+                remoteState={checkIn.remoteState}
+                remoteError={checkIn.remoteError}
                 onStart={checkIn.start}
                 onExtend={checkIn.extend}
                 onCheckIn={checkIn.checkIn}
