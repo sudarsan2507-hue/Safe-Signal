@@ -40,6 +40,12 @@ Closing it needs a server that holds the check-in deadline and dispatches throug
 provider when it expires — so the alert leaves without depending on the person being able
 to act. That is the single change that would most improve this project.
 
+**That backend is now written and waiting for credentials.** It calls and texts your
+contacts automatically when a check-in is missed, with nothing required from your phone.
+It is off until configured, and the app says plainly which mode it is in rather than
+implying cover it does not have. See **[docs/backend.md](docs/backend.md)** to switch it
+on — it needs an Upstash account and a voice/SMS provider, and no `npm install`.
+
 ## Getting to help quickly
 
 An emergency tool that takes four taps to reach is not an emergency tool.
