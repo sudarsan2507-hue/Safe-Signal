@@ -40,6 +40,44 @@ export const DURATION_PRESETS = [5, 10, 15];
 /** Longest timer we will accept, to catch a mis-typed custom value. */
 export const MAX_DURATION_MS = 12 * 60 * 60 * 1000;
 
+/** The same limit in minutes, for the custom input. */
+export const MAX_DURATION_MINUTES = MAX_DURATION_MS / 60_000;
+
+/**
+ * Validate a hand-typed duration.
+ *
+ * Kept here rather than in the component so the rules are testable, and so the
+ * error text is specific: a timer that silently refuses to start would be a bad
+ * failure for this feature in particular.
+ *
+ * @param {string|number} value - minutes, as typed
+ * @returns {{ ok: true, minutes: number } | { ok: false, error: string }}
+ */
+export const validateCustomMinutes = (value) => {
+    const trimmed = String(value ?? '').trim();
+
+    if (trimmed === '') {
+        return { ok: false, error: 'Enter how many minutes.' };
+    }
+
+    const minutes = Number(trimmed);
+
+    if (!Number.isFinite(minutes)) {
+        return { ok: false, error: 'Enter a number of minutes, like 40.' };
+    }
+    if (!Number.isInteger(minutes)) {
+        return { ok: false, error: 'Use whole minutes, like 40.' };
+    }
+    if (minutes < 1) {
+        return { ok: false, error: 'Use at least 1 minute.' };
+    }
+    if (minutes > MAX_DURATION_MINUTES) {
+        return { ok: false, error: `The longest is ${MAX_DURATION_MINUTES / 60} hours.` };
+    }
+
+    return { ok: true, minutes };
+};
+
 /**
  * @typedef {Object} CheckIn
  * @property {string} id

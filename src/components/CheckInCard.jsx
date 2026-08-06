@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { DURATION_PRESETS, formatRemaining, GRACE_MS } from '../utils/checkIn';
+import {
+    DURATION_PRESETS,
+    formatRemaining,
+    validateCustomMinutes,
+    MAX_DURATION_MINUTES,
+    GRACE_MS,
+} from '../utils/checkIn';
 import './CheckInCard.css';
 
 /**
@@ -16,6 +22,49 @@ import './CheckInCard.css';
  */
 const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, onExtend, onCheckIn }) => {
     const [note, setNote] = useState('');
+    const [showCustom, setShowCustom] = useState(false);
+    const [customMinutes, setCustomMinutes] = useState('');
+    const [customError, setCustomError] = useState('');
+    const [customPreview, setCustomPreview] = useState(null);
+
+    /**
+     * Recompute the wall-clock end time as the value is typed, so a number can
+     * be sanity-checked against "when do I actually expect to be home?".
+     *
+     * Derived in the handler rather than during render because it reads the
+     * clock, and an impure render would let the preview drift on any unrelated
+     * re-render.
+     *
+     * @param {string} value
+     */
+    const updateCustom = (value) => {
+        setCustomMinutes(value);
+        setCustomError('');
+
+        const check = validateCustomMinutes(value);
+        setCustomPreview(
+            check.ok
+                ? new Date(Date.now() + check.minutes * 60 * 1000).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                })
+                : null,
+        );
+    };
+
+    const handleCustomSubmit = (event) => {
+        event.preventDefault();
+        const result = validateCustomMinutes(customMinutes);
+        if (!result.ok) {
+            setCustomError(result.error);
+            return;
+        }
+        setCustomError('');
+        setShowCustom(false);
+        setCustomMinutes('');
+        setCustomPreview(null);
+        onStart(result.minutes * 60 * 1000, note);
+    };
 
     if (phase === 'counting' || phase === 'grace' || phase === 'fired') {
         return (
@@ -101,7 +150,58 @@ const CheckInCard = ({ phase, remainingMs, graceRemainingMs, record, onStart, on
                         <span className="duration-unit">min</span>
                     </button>
                 ))}
+
+                <button
+                    type="button"
+                    className={`duration-start duration-start--custom ${showCustom ? 'is-open' : ''}`}
+                    onClick={() => {
+                        setShowCustom((open) => !open);
+                        setCustomError('');
+                    }}
+                    aria-expanded={showCustom}
+                >
+                    <span className="duration-custom-label">Other</span>
+                </button>
             </div>
+
+            {/* The presets cover the common cases; a walk home might be 40
+                minutes. Typing needs a confirm step, so it stays off the fast
+                path rather than slowing it down. */}
+            {showCustom && (
+                <form className="checkin-custom" onSubmit={handleCustomSubmit} noValidate>
+                    <div className="field">
+                        <label htmlFor="checkin-custom">Minutes</label>
+                        <div className="checkin-custom-row">
+                            <input
+                                id="checkin-custom"
+                                type="number"
+                                inputMode="numeric"
+                                min={1}
+                                max={MAX_DURATION_MINUTES}
+                                value={customMinutes}
+                                onChange={(e) => updateCustom(e.target.value)}
+                                placeholder="40"
+                                autoFocus
+                                aria-invalid={Boolean(customError)}
+                                aria-describedby={customError ? 'checkin-custom-error' : 'checkin-custom-hint'}
+                            />
+                            <button type="submit" className="btn-primary">Start</button>
+                        </div>
+                    </div>
+
+                    {customError ? (
+                        <p className="field-error" id="checkin-custom-error" role="alert">
+                            {customError}
+                        </p>
+                    ) : (
+                        <p className="checkin-footnote" id="checkin-custom-hint">
+                            {customPreview
+                                ? `Checks in at ${customPreview}.`
+                                : `Anything from 1 minute to ${MAX_DURATION_MINUTES / 60} hours.`}
+                        </p>
+                    )}
+                </form>
+            )}
 
             <details className="checkin-note-toggle">
                 <summary>Add a note (optional)</summary>

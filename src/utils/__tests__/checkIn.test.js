@@ -9,8 +9,10 @@ import {
     formatRemaining,
     formatDuration,
     describeCheckInReason,
+    validateCustomMinutes,
     GRACE_MS,
     MAX_DURATION_MS,
+    MAX_DURATION_MINUTES,
     CHECK_IN_KEY,
 } from '../checkIn.js';
 
@@ -122,6 +124,54 @@ describe('extendCheckIn', () => {
         const record = startCheckIn(MINUTE, '', T0);
         const extended = extendCheckIn(record, MAX_DURATION_MS * 2, T0);
         expect(extended.expiresAt).toBeLessThanOrEqual(T0 + MAX_DURATION_MS);
+    });
+});
+
+describe('validateCustomMinutes', () => {
+    it('accepts a plain whole number', () => {
+        expect(validateCustomMinutes('40')).toEqual({ ok: true, minutes: 40 });
+        expect(validateCustomMinutes(90)).toEqual({ ok: true, minutes: 90 });
+    });
+
+    it('accepts the boundaries', () => {
+        expect(validateCustomMinutes(1).ok).toBe(true);
+        expect(validateCustomMinutes(MAX_DURATION_MINUTES).ok).toBe(true);
+    });
+
+    it('rejects an empty value with a specific message', () => {
+        // A timer that silently refuses to start would be a bad failure here.
+        const result = validateCustomMinutes('   ');
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/enter how many minutes/i);
+    });
+
+    it('rejects text', () => {
+        const result = validateCustomMinutes('soon');
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/number of minutes/i);
+    });
+
+    it('rejects fractions', () => {
+        expect(validateCustomMinutes('12.5').ok).toBe(false);
+        expect(validateCustomMinutes('12.5').error).toMatch(/whole minutes/i);
+    });
+
+    it('rejects zero and negatives', () => {
+        expect(validateCustomMinutes(0).ok).toBe(false);
+        expect(validateCustomMinutes(-10).ok).toBe(false);
+    });
+
+    it('rejects a mis-typed value beyond the maximum', () => {
+        const result = validateCustomMinutes(MAX_DURATION_MINUTES + 1);
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/longest is 12 hours/i);
+    });
+
+    it('produces a duration startCheckIn will accept', () => {
+        const result = validateCustomMinutes('45');
+        const record = startCheckIn(result.minutes * 60_000, '', T0);
+        expect(record).not.toBeNull();
+        expect(record.expiresAt).toBe(T0 + 45 * MINUTE);
     });
 });
 

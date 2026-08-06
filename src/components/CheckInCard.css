@@ -113,6 +113,47 @@
   letter-spacing: 0.06em;
 }
 
+/* "Other" is a quieter sibling: available, but not competing with the presets
+   that start in a single tap. */
+.duration-start--custom {
+  border-style: dashed;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+.duration-start--custom.is-open,
+.duration-start--custom:hover {
+  background: var(--bg-sunken);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.duration-custom-label {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.checkin-custom {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.checkin-custom-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.checkin-custom-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.checkin-custom-row .btn-primary {
+  flex-shrink: 0;
+  min-width: 6rem;
+}
+
 /* The note is genuinely optional, so it stays collapsed and out of the way. */
 .checkin-note-toggle summary {
   cursor: pointer;
