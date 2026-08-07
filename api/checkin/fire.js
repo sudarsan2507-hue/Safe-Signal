@@ -14,68 +14,72 @@
  *      rung twice for one missed check-in.
  */
 
-import { json, readJson, requireMethod } from '../_lib/http.js';
+import { sendJson, readJsonBody, rejectWrongMethod } from '../_lib/http.js';
 import { isConfigured } from '../_lib/config.js';
 import { verifyToken } from '../_lib/tokens.js';
 import { getCheckIn, putCheckIn, claimFire, releaseFire } from '../_lib/store.js';
 import { dispatchAlert } from '../_lib/messenger.js';
 
-export const config = { runtime: 'nodejs' };
-
 /**
- * @param {Request} request
- * @returns {Promise<Response>}
+ * @param {import('http').IncomingMessage} req
+ * @param {import('http').ServerResponse} res
  */
-export default async function handler(request) {
-    const wrongMethod = requireMethod(request, 'POST');
-    if (wrongMethod) return wrongMethod;
+export default async function handler(req, res) {
+    if (rejectWrongMethod(req, res, 'POST')) return;
 
     if (!isConfigured()) {
-        return json(503, { error: 'The backend is not configured.' });
+        sendJson(res, 503, { error: 'The backend is not configured.' });
+        return;
     }
 
-    const body = await readJson(request);
+    const body = await readJsonBody(req);
     if (!body?.id || !body?.token) {
-        return json(400, { error: 'id and token are required.' });
+        sendJson(res, 400, { error: 'id and token are required.' });
+        return;
     }
 
     if (!(await verifyToken(body.id, body.token))) {
-        return json(403, { error: 'Invalid token.' });
+        sendJson(res, 403, { error: 'Invalid token.' });
+        return;
     }
 
     const record = await getCheckIn(body.id);
     if (!record) {
         // Cancelled, or expired out of the store. Answer 200 so the scheduler
         // treats it as handled and stops retrying.
-        return json(200, { ok: true, fired: false, reason: 'Check-in was cancelled or has expired.' });
+        sendJson(res, 200, {
+            ok: true,
+            fired: false,
+            reason: 'Check-in was cancelled or has expired.',
+        });
+        return;
     }
 
     if (record.status === 'fired') {
-        return json(200, { ok: true, fired: false, reason: 'Already dispatched.' });
+        sendJson(res, 200, { ok: true, fired: false, reason: 'Already dispatched.' });
+        return;
     }
 
     // Guard against a retry racing an in-flight dispatch.
     if (!(await claimFire(body.id))) {
-        return json(200, { ok: true, fired: false, reason: 'Another delivery already claimed this.' });
+        sendJson(res, 200, {
+            ok: true,
+            fired: false,
+            reason: 'Another delivery already claimed this.',
+        });
+        return;
     }
 
     try {
         const { warning, results } = await dispatchAlert(record);
 
-        await putCheckIn({
-            ...record,
-            status: 'fired',
-            firedAt: Date.now(),
-            results,
-        });
+        await putCheckIn({ ...record, status: 'fired', firedAt: Date.now(), results });
 
-        const reached = results.filter((r) => r.ok).length;
-
-        return json(200, {
+        sendJson(res, 200, {
             ok: true,
             fired: true,
             contacts: results.length,
-            reached,
+            reached: results.filter((r) => r.ok).length,
             warning,
             results,
         });
@@ -84,6 +88,6 @@ export default async function handler(request) {
         // would short-circuit on a claim nobody holds and the alert would never
         // go out at all.
         await releaseFire(body.id).catch(() => { });
-        return json(500, { error: `Dispatch failed: ${error.message}` });
+        sendJson(res, 500, { error: `Dispatch failed: ${error.message}` });
     }
 }

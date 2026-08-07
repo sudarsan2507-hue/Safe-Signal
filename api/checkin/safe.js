@@ -9,35 +9,35 @@
  * prevent, so an invalid token is refused before anything else happens.
  */
 
-import { json, readJson, requireMethod } from '../_lib/http.js';
+import { sendJson, readJsonBody, rejectWrongMethod } from '../_lib/http.js';
 import { isConfigured } from '../_lib/config.js';
 import { verifyToken } from '../_lib/tokens.js';
 import { getCheckIn, deleteCheckIn } from '../_lib/store.js';
 import { cancelFire } from '../_lib/scheduler.js';
 
-export const config = { runtime: 'nodejs' };
-
 /**
- * @param {Request} request
- * @returns {Promise<Response>}
+ * @param {import('http').IncomingMessage} req
+ * @param {import('http').ServerResponse} res
  */
-export default async function handler(request) {
-    const wrongMethod = requireMethod(request, 'POST');
-    if (wrongMethod) return wrongMethod;
+export default async function handler(req, res) {
+    if (rejectWrongMethod(req, res, 'POST')) return;
 
     if (!isConfigured()) {
-        return json(503, { error: 'The backend is not configured.' });
+        sendJson(res, 503, { error: 'The backend is not configured.' });
+        return;
     }
 
-    const body = await readJson(request);
+    const body = await readJsonBody(req);
     if (!body?.id || !body?.token) {
-        return json(400, { error: 'id and token are required.' });
+        sendJson(res, 400, { error: 'id and token are required.' });
+        return;
     }
 
     if (!(await verifyToken(body.id, body.token))) {
         // Deliberately identical to "not found": distinguishing them would
         // confirm which ids exist.
-        return json(404, { error: 'No such check-in.' });
+        sendJson(res, 404, { error: 'No such check-in.' });
+        return;
     }
 
     try {
@@ -49,8 +49,8 @@ export default async function handler(request) {
         await deleteCheckIn(body.id);
         await cancelFire(record?.scheduledMessageId);
 
-        return json(200, { ok: true, cancelled: Boolean(record) });
+        sendJson(res, 200, { ok: true, cancelled: Boolean(record) });
     } catch (error) {
-        return json(502, { error: `Could not cancel the check-in: ${error.message}` });
+        sendJson(res, 502, { error: `Could not cancel the check-in: ${error.message}` });
     }
 }

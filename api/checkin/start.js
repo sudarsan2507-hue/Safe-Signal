@@ -10,13 +10,11 @@
  * untrusted input rather than as our own data coming home.
  */
 
-import { json, readJson, requireMethod } from '../_lib/http.js';
+import { sendJson, readJsonBody, rejectWrongMethod } from '../_lib/http.js';
 import { isConfigured, missingConfig, hasUsableSecret } from '../_lib/config.js';
 import { createId, signId } from '../_lib/tokens.js';
 import { putCheckIn } from '../_lib/store.js';
 import { scheduleFire } from '../_lib/scheduler.js';
-
-export const config = { runtime: 'nodejs' };
 
 /** Bounds mirrored from the client, re-checked because clients can lie. */
 const MIN_DURATION_MS = 60_000;
@@ -27,32 +25,39 @@ const MAX_CONTACTS = 10;
 const GRACE_MS = 60_000;
 
 /**
- * @param {Request} request
- * @returns {Promise<Response>}
+ * @param {import('http').IncomingMessage} req
+ * @param {import('http').ServerResponse} res
  */
-export default async function handler(request) {
-    const wrongMethod = requireMethod(request, 'POST');
-    if (wrongMethod) return wrongMethod;
+export default async function handler(req, res) {
+    if (rejectWrongMethod(req, res, 'POST')) return;
 
     if (!isConfigured()) {
-        // Say which pieces are missing: a backend that accepts a check-in it
-        // cannot act on is worse than one that refuses outright.
-        return json(503, {
+        // Name the missing pieces: a backend that accepts a check-in it cannot
+        // act on is worse than one that refuses outright.
+        sendJson(res, 503, {
             error: 'The backend is not configured.',
             missing: missingConfig(),
         });
+        return;
     }
 
     if (!hasUsableSecret()) {
-        return json(503, { error: 'CHECKIN_SIGNING_SECRET is too short; use at least 32 characters.' });
+        sendJson(res, 503, {
+            error: 'CHECKIN_SIGNING_SECRET is too short; use at least 32 characters.',
+        });
+        return;
     }
 
-    const body = await readJson(request);
-    if (!body) return json(400, { error: 'Expected a JSON body.' });
+    const body = await readJsonBody(req);
+    if (!body) {
+        sendJson(res, 400, { error: 'Expected a JSON body.' });
+        return;
+    }
 
     const durationMs = Number(body.durationMs);
     if (!Number.isFinite(durationMs) || durationMs < MIN_DURATION_MS || durationMs > MAX_DURATION_MS) {
-        return json(400, { error: 'durationMs must be between 1 minute and 12 hours.' });
+        sendJson(res, 400, { error: 'durationMs must be between 1 minute and 12 hours.' });
+        return;
     }
 
     const contacts = Array.isArray(body.contacts) ? body.contacts.slice(0, MAX_CONTACTS) : [];
@@ -64,10 +69,9 @@ export default async function handler(request) {
         }));
 
     if (usable.length === 0) {
-        return json(400, { error: 'At least one contact with a phone number is required.' });
+        sendJson(res, 400, { error: 'At least one contact with a phone number is required.' });
+        return;
     }
-
-    const location = parseLocation(body.location);
 
     const id = createId();
     const token = await signId(id);
@@ -80,7 +84,7 @@ export default async function handler(request) {
         note: String(body.note ?? '').slice(0, 200),
         userName: String(body.userName ?? '').slice(0, 60),
         contacts: usable,
-        location,
+        location: parseLocation(body.location),
         status: 'active',
     };
 
@@ -95,7 +99,7 @@ export default async function handler(request) {
         // Keep the scheduler handle so cancelling can withdraw the callback.
         await putCheckIn({ ...record, scheduledMessageId: messageId });
 
-        return json(201, {
+        sendJson(res, 201, {
             id,
             token,
             expiresAt,
@@ -105,7 +109,7 @@ export default async function handler(request) {
     } catch (error) {
         // Failing loudly matters: the client must fall back to its on-device
         // timer rather than believe it is covered when it is not.
-        return json(502, { error: `Could not register the check-in: ${error.message}` });
+        sendJson(res, 502, { error: `Could not register the check-in: ${error.message}` });
     }
 }
 
